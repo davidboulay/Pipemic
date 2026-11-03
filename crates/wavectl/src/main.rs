@@ -1,3 +1,5 @@
+mod mix;
+
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use std::time::{Duration, Instant};
@@ -42,6 +44,12 @@ PARAMS:
         #[arg(long)]
         dry_run: bool,
     },
+    /// Show or change the wavelinkd mixer (no args: show the matrix)
+    #[command(after_help = mix::VALUE_HELP)]
+    Mix {
+        #[command(subcommand)]
+        action: Option<mix::MixCmd>,
+    },
     /// Hex-dump a raw message (GET_MEM, read-only); with --watch, print each change
     Dump {
         /// Message ID (0 config, 1 status, 10 version)
@@ -66,6 +74,9 @@ PARAMS:
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Cmd::Mix { action } = cli.cmd {
+        return mix::run(action);
+    }
     let dev = Wave3::open().context(
         "opening Wave:3 (is it plugged in, and is udev/70-elgato-wave.rules installed?)",
     )?;
@@ -75,6 +86,7 @@ fn main() -> Result<()> {
         Cmd::Set { param, value, dry_run } => set(&dev, &param, &value, dry_run),
         Cmd::Watch { interval, status } => watch(&dev, interval, status),
         Cmd::Dump { id, watch, interval } => dump(&dev, id, watch, interval),
+        Cmd::Mix { .. } => unreachable!(),
     }
 }
 

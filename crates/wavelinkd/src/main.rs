@@ -2,22 +2,29 @@
 //!
 //! - Each app channel is a virtual sink ("Wave Link Music") apps play into.
 //! - Each mix is a filter-chain (two builtin mixers, one gain per channel)
-//!   loaded in this process. Stream/Chat publish an `Audio/Source`;
-//!   Personal plays to the default output.
-//! - A registry-driven linker wires channel outputs to every mix input.
+//!   loaded in this process. Source mixes publish an `Audio/Source`;
+//!   the monitor mix plays to the default output.
+//! - A registry-driven graph keeper wires channels into mixes, pushes gain
+//!   changes and cuts feedback links.
+//! - Config: `$XDG_CONFIG_HOME/wavelink/mixer.toml`; control socket:
+//!   `$XDG_RUNTIME_DIR/wavelinkd.sock` (see control.rs).
 //!
-//! Everything is owned by this process and disappears when it exits.
+//! Everything in PipeWire is owned by this process and disappears on exit.
 
+mod control;
 mod links;
 mod model;
 
 use anyhow::{bail, Context, Result};
-use links::{Linker, NodeMatch, Want};
-use model::{Model, Source};
+use control::{Job, Reply, Request};
+use links::{Graph, NodeMatch, Want};
+use model::{check_db, Config};
 use pipewire as pw;
 use pw::loop_::Signal;
 use pw::properties::properties;
+use std::cell::RefCell;
 use std::ffi::CString;
+use std::rc::Rc;
 
 fn load_module(ctx: &pw::context::ContextRc, name: &str, args: &str) -> Result<()> {
     let name_c = CString::new(name)?;
@@ -33,9 +40,53 @@ fn load_module(ctx: &pw::context::ContextRc, name: &str, args: &str) -> Result<(
     Ok(())
 }
 
+/// Apply one control request to the config; returns the mixes whose gains changed.
+fn apply(cfg: &mut Config, req: Request) -> Result<Vec<usize>> {
+    let all: Vec<usize> = (0..cfg.mixes.len()).collect();
+    Ok(match req {
+        Request::Status => vec![],
+        Request::Channel { channel, volume, mute } => {
+            let ci = cfg.channel_index(&channel)?;
+            if let Some(v) = volume {
+                cfg.channels[ci].volume = check_db(v)?;
+            }
+            if let Some(m) = mute {
+                cfg.channels[ci].mute = m;
+            }
+            all
+        }
+        Request::Mix { mix, volume, mute } => {
+            let mi = cfg.mix_index(&mix)?;
+            if let Some(v) = volume {
+                cfg.mixes[mi].volume = check_db(v)?;
+            }
+            if let Some(m) = mute {
+                cfg.mixes[mi].mute = m;
+            }
+            vec![mi]
+        }
+        Request::Route { mix, channel, volume, mute } => {
+            let mi = cfg.mix_index(&mix)?;
+            cfg.channel_index(&channel)?;
+            if let Some(v) = volume {
+                check_db(v)?;
+            }
+            let r = cfg.route_mut(&mix, &channel);
+            if let Some(v) = volume {
+                r.volume = v;
+            }
+            if let Some(m) = mute {
+                r.mute = m;
+            }
+            vec![mi]
+        }
+    })
+}
+
 fn main() -> Result<()> {
     pw::init();
-    let model = Model::default_layout();
+    let cfg_path = model::config_path();
+    let cfg = Config::load_or_init(&cfg_path)?;
 
     let main_loop = pw::main_loop::MainLoopRc::new(None).context("PipeWire main loop")?;
     let mut signals = Vec::new();
@@ -52,61 +103,85 @@ fn main() -> Result<()> {
 
     // Channels: one virtual sink per app channel.
     let mut sinks = Vec::new();
-    for ch in &model.channels {
-        if let Source::Virtual = ch.source {
-            let sink = core
-                .create_object::<pw::node::Node>(
-                    "adapter",
-                    &properties! {
-                        "factory.name" => "support.null-audio-sink",
-                        "node.name" => Model::sink_node_name(ch),
-                        "node.description" => format!("Wave Link {}", ch.label),
-                        "media.class" => "Audio/Sink",
-                        "audio.position" => "FL,FR",
-                        "monitor.channel-volumes" => "true",
-                        "object.linger" => "false",
-                    },
-                )
-                .with_context(|| format!("creating channel {}", ch.id))?;
-            sinks.push(sink);
-        }
+    for ch in cfg.channels.iter().filter(|c| c.device.is_none()) {
+        let sink = core
+            .create_object::<pw::node::Node>(
+                "adapter",
+                &properties! {
+                    "factory.name" => "support.null-audio-sink",
+                    "node.name" => Config::sink_node_name(ch),
+                    "node.description" => format!("Wave Link {}", ch.label),
+                    "media.class" => "Audio/Sink",
+                    "audio.position" => "FL,FR",
+                    "monitor.channel-volumes" => "true",
+                    "object.linger" => "false",
+                },
+            )
+            .with_context(|| format!("creating channel {}", ch.id))?;
+        sinks.push(sink);
     }
 
     // Mixes: one filter-chain each, running inside this process.
-    for mi in 0..model.mixes.len() {
-        load_module(&context, "libpipewire-module-filter-chain", &model.filter_chain_args(mi))
-            .with_context(|| format!("mix {}", model.mixes[mi].id))?;
+    for mi in 0..cfg.mixes.len() {
+        load_module(&context, "libpipewire-module-filter-chain", &cfg.filter_chain_args(mi))
+            .with_context(|| format!("mix {}", cfg.mixes[mi].id))?;
     }
 
     // Wiring: every channel into every mix (gain decides what's audible).
     let mut wants = Vec::new();
-    for m in &model.mixes {
-        for (i, ch) in model.channels.iter().enumerate() {
+    for m in &cfg.mixes {
+        for (i, ch) in cfg.channels.iter().enumerate() {
             for (side, pos) in ["FL", "FR"].iter().enumerate() {
-                let (out_node, out_ports) = match ch.source {
-                    Source::Virtual => (NodeMatch::Exact(Model::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
-                    Source::Device { node_prefix } => (
-                        NodeMatch::Prefix(node_prefix.to_owned()),
-                        vec!["capture_MONO".to_owned(), format!("capture_{pos}")],
-                    ),
+                let (out_node, out_ports) = match &ch.device {
+                    None => (NodeMatch::Exact(Config::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
+                    Some(prefix) => {
+                        (NodeMatch::Prefix(prefix.clone()), vec!["capture_MONO".to_owned(), format!("capture_{pos}")])
+                    }
                 };
-                wants.push(Want {
-                    out_node,
-                    out_ports,
-                    in_node: Model::mix_in_node_name(m),
-                    in_port: Model::mix_in_port(i, side),
-                });
+                wants.push(Want { out_node, out_ports, in_node: Config::mix_in_node_name(m), in_port: Config::mix_in_port(i, side) });
             }
         }
     }
-    let _linker = Linker::start(&core, wants)?;
+    let bind: Vec<String> = cfg.mixes.iter().map(Config::mix_in_node_name).collect();
+    let graph = Rc::new(Graph::start(&core, wants, bind)?);
 
-    for m in &model.mixes {
-        eprintln!("wavelinkd: mix '{}' -> {}", m.label, Model::mix_out_node_name(m));
+    for m in &cfg.mixes {
+        eprintln!("wavelinkd: mix '{}' -> {}", m.label, Config::mix_out_node_name(m));
     }
-    eprintln!("wavelinkd: {} channels; running (Ctrl-C to stop)", model.channels.len());
+
+    // Control requests arrive on the main loop.
+    let cfg = Rc::new(RefCell::new(cfg));
+    let (tx, rx) = pw::channel::channel::<Job>();
+    let sock = control::serve(tx)?;
+    let _rx = {
+        let cfg = cfg.clone();
+        let graph = graph.clone();
+        rx.attach(main_loop.loop_(), move |(req, reply)| {
+            let mut c = cfg.borrow_mut();
+            let before = c.clone();
+            let r = apply(&mut c, req).and_then(|changed| {
+                for &mi in &changed {
+                    graph.set_controls(&Config::mix_in_node_name(&c.mixes[mi]), &c.mix_controls(mi))?;
+                }
+                if !changed.is_empty() {
+                    c.save(&cfg_path)?;
+                }
+                Ok(())
+            });
+            let _ = reply.send(match r {
+                Ok(()) => Reply { ok: true, error: None, config: Some(c.clone()) },
+                Err(e) => {
+                    *c = before;
+                    Reply { ok: false, error: Some(format!("{e:#}")), config: None }
+                }
+            });
+        })
+    };
+
+    eprintln!("wavelinkd: control socket {}; running (Ctrl-C to stop)", sock.display());
     main_loop.run();
     eprintln!("wavelinkd: stopping");
+    let _ = std::fs::remove_file(&sock);
     drop(sinks);
     drop(signals);
     Ok(())

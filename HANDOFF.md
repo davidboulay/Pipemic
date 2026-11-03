@@ -36,9 +36,11 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   - Channels: virtual sinks `wavelink.channel.{system,music,browser,voicechat}` plus the Wave:3 mic (matched by node.name prefix).
   - Mixes: one in-process filter-chain each (two builtin `mixer` nodes L/R, max 8 channels). Stream and Chat are `Audio/Source` (`wavelink.mix.stream`, `wavelink.mix.chat`). Personal is a playback stream that WirePlumber routes to the default output.
   - A registry-driven linker wires every channel into every mix and relinks when ports reappear.
-  - Gains: defaults in `model.rs` (mic off in Personal, voice chat off in Chat). Runtime change: `pw-cli s <id of wavelink.mix.X.in> Props '{ params = [ "mixL:Gain N" g "mixR:Gain N" g ] }'`, where N = channel index + 1 (mic = 1). Tested with a 440 Hz tone: 1153 → 0 when muted, back on restore.
-  - Known risk: if a `wavelink.channel.*` sink becomes the default output, Personal feeds back into itself. This needs a guard.
-- Next: config file + control interface (set gains/mute without pw-cli), then app → channel routing.
+  - Config: `$XDG_CONFIG_HOME/wavelink/mixer.toml` (written with defaults on first run, saved on every change). Volumes in dB (-60..0) at three levels: channel, mix master, and route (channel × mix), plus a mute at each level. Defaults: mic muted in Personal, voice chat muted in Chat.
+  - Control: JSON lines on `$XDG_RUNTIME_DIR/wavelinkd.sock` (see `control.rs`). CLI: `wavectl mix`, `wavectl mix channel music -6`, `wavectl mix master stream mute`, `wavectl mix route stream music -20`.
+  - Feedback guard: any link from a `wavelink.mix.*` output into a `wavelink.*` node is destroyed (tested with a manual pw-link).
+  - Verified with a 440 Hz tone: route -20 dB → 1/10 amplitude, plus channel -6 dB → 1/20, master mute → 0.
+- Next: app → channel routing (rules matching application.name / binary), then a systemd user unit.
 
 ## Still open on the Mac side
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.

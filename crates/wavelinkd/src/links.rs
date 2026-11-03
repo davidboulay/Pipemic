@@ -1,8 +1,12 @@
-//! Registry-driven linker: keeps the wanted port-to-port links in place,
-//! (re)creating them whenever the ports appear (e.g. the mic is replugged).
+//! Registry-driven graph keeper:
+//! - creates the wanted port-to-port links whenever their ports exist
+//!   (re-creating them after e.g. a mic replug);
+//! - binds the mix input nodes so gains can be pushed at runtime;
+//! - removes feedback links (a mix playing into a Wave Link channel).
 
 use pipewire as pw;
 use pw::properties::properties;
+use pw::spa;
 use pw::types::ObjectType;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -43,6 +47,8 @@ struct State {
     ports: HashMap<u32, Port>,
     /// (out port id, in port id) -> link proxy
     links: HashMap<(u32, u32), pw::link::Link>,
+    /// node.name -> bound proxy, for nodes we push params to
+    bound: HashMap<String, (u32, pw::node::Node)>,
 }
 
 impl State {
@@ -58,20 +64,27 @@ impl State {
     }
 }
 
-pub struct Linker {
+pub struct Graph {
+    state: Rc<RefCell<State>>,
     _listener: pw::registry::Listener,
     _registry: Rc<pw::registry::RegistryRc>,
 }
 
-impl Linker {
-    pub fn start(core: &pw::core::CoreRc, wants: Vec<Want>) -> anyhow::Result<Self> {
+/// Is a link from node `from` into node `to` a feedback loop we must cut?
+/// Any Wave Link mix output feeding a Wave Link node.
+fn is_feedback(from: &str, to: &str) -> bool {
+    from.starts_with("wavelink.mix.") && !from.ends_with(".in") && to.starts_with("wavelink.")
+}
+
+impl Graph {
+    /// `bind_nodes`: node names to bind for `set_controls`.
+    pub fn start(core: &pw::core::CoreRc, wants: Vec<Want>, bind_nodes: Vec<String>) -> anyhow::Result<Self> {
         let registry = Rc::new(core.get_registry_rc()?);
         let state = Rc::new(RefCell::new(State::default()));
         let wants = Rc::new(wants);
 
         let reconcile = {
             let state = state.clone();
-            let wants = wants.clone();
             let core = core.clone();
             move || {
                 let mut st = state.borrow_mut();
@@ -106,16 +119,24 @@ impl Linker {
 
         let st_add = state.clone();
         let st_rm = state.clone();
+        let reg = registry.clone();
         let listener = registry
             .add_listener_local()
             .global(move |g| {
                 let Some(props) = g.props else { return };
-                let changed = match g.type_ {
+                match g.type_ {
                     ObjectType::Node => {
-                        if let Some(n) = props.get("node.name") {
-                            st_add.borrow_mut().nodes.insert(g.id, n.to_owned());
+                        let Some(name) = props.get("node.name") else { return };
+                        let mut st = st_add.borrow_mut();
+                        st.nodes.insert(g.id, name.to_owned());
+                        if bind_nodes.iter().any(|b| b == name) {
+                            match reg.bind::<pw::node::Node, _>(g) {
+                                Ok(n) => {
+                                    st.bound.insert(name.to_owned(), (g.id, n));
+                                }
+                                Err(e) => eprintln!("wavelinkd: bind {name} failed: {e}"),
+                            }
                         }
-                        true
                     }
                     ObjectType::Port => {
                         let (Some(node), Some(name), Some(dir)) =
@@ -125,23 +146,73 @@ impl Linker {
                         };
                         let Ok(node) = node.parse() else { return };
                         st_add.borrow_mut().ports.insert(g.id, Port { node, name: name.to_owned(), out: dir == "out" });
-                        true
                     }
-                    _ => false,
-                };
-                if changed {
-                    reconcile();
+                    ObjectType::Link => {
+                        let ids = (props.get("link.output.node"), props.get("link.input.node"));
+                        let (Some(Ok(o)), Some(Ok(i))) = (ids.0.map(str::parse::<u32>), ids.1.map(str::parse::<u32>))
+                        else {
+                            return;
+                        };
+                        let st = st_add.borrow();
+                        if let (Some(from), Some(to)) = (st.nodes.get(&o), st.nodes.get(&i)) {
+                            if is_feedback(from, to) {
+                                eprintln!("wavelinkd: removing feedback link {from} -> {to}");
+                                reg.destroy_global(g.id);
+                            }
+                        }
+                        return;
+                    }
+                    _ => return,
                 }
+                reconcile();
             })
             .global_remove(move |id| {
                 let mut st = st_rm.borrow_mut();
                 st.nodes.remove(&id);
+                st.bound.retain(|_, (nid, _)| *nid != id);
                 if st.ports.remove(&id).is_some() {
                     st.links.retain(|&(o, i), _| o != id && i != id);
                 }
             })
             .register();
 
-        Ok(Self { _listener: listener, _registry: registry })
+        Ok(Self { state, _listener: listener, _registry: registry })
+    }
+
+    /// Push filter-graph control values (`"mixL:Gain 1"` = 0.5, …) to a bound node.
+    pub fn set_controls(&self, node_name: &str, controls: &[(String, f32)]) -> anyhow::Result<()> {
+        let st = self.state.borrow();
+        let (_, node) = st.bound.get(node_name).ok_or_else(|| anyhow::anyhow!("{node_name} not bound yet"))?;
+        let params: Vec<spa::pod::Value> = controls
+            .iter()
+            .flat_map(|(k, v)| [spa::pod::Value::String(k.clone()), spa::pod::Value::Float(*v)])
+            .collect();
+        let obj = spa::pod::Value::Object(spa::pod::Object {
+            type_: spa::sys::SPA_TYPE_OBJECT_Props,
+            id: spa::sys::SPA_PARAM_Props,
+            properties: vec![spa::pod::Property {
+                key: spa::sys::SPA_PROP_params,
+                flags: spa::pod::PropertyFlags::empty(),
+                value: spa::pod::Value::Struct(params),
+            }],
+        });
+        let bytes = spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &obj)?.0.into_inner();
+        let pod = spa::pod::Pod::from_bytes(&bytes).ok_or_else(|| anyhow::anyhow!("bad pod"))?;
+        node.set_param(spa::param::ParamType::Props, 0, pod);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_feedback;
+
+    #[test]
+    fn feedback_rule() {
+        assert!(is_feedback("wavelink.mix.personal", "wavelink.channel.music"));
+        assert!(is_feedback("wavelink.mix.stream", "wavelink.mix.chat.in"));
+        assert!(!is_feedback("wavelink.mix.personal", "alsa_output.usb-CalDigit"));
+        assert!(!is_feedback("wavelink.channel.music", "wavelink.mix.stream.in"));
+        assert!(!is_feedback("wavelink.mix.stream.in", "wavelink.mix.stream"));
     }
 }

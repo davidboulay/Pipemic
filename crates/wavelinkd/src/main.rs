@@ -13,6 +13,7 @@
 
 mod control;
 mod links;
+mod mic;
 mod model;
 
 use anyhow::{bail, Context, Result};
@@ -45,6 +46,7 @@ fn apply(cfg: &mut Config, req: Request) -> Result<Vec<usize>> {
     let all: Vec<usize> = (0..cfg.mixes.len()).collect();
     Ok(match req {
         Request::Status => vec![],
+        Request::Mic { .. } => unreachable!("handled on the control thread"),
         Request::Channel { channel, volume, mute } => {
             let ci = cfg.channel_index(&channel)?;
             if let Some(v) = volume {
@@ -193,7 +195,7 @@ fn main() -> Result<()> {
     // Control requests arrive on the main loop.
     let cfg = Rc::new(RefCell::new(cfg));
     let (tx, rx) = pw::channel::channel::<Job>();
-    let sock = control::serve(tx)?;
+    let sock = control::serve(tx, mic::Mic::start())?;
     let _rx = {
         let cfg = cfg.clone();
         let graph = graph.clone();
@@ -210,10 +212,10 @@ fn main() -> Result<()> {
                 Ok(())
             });
             let _ = reply.send(match r {
-                Ok(()) => Reply { ok: true, error: None, config: Some(c.clone()) },
+                Ok(()) => Reply { ok: true, error: None, config: Some(c.clone()), mic: None },
                 Err(e) => {
                     *c = before;
-                    Reply { ok: false, error: Some(format!("{e:#}")), config: None }
+                    Reply::err(format!("{e:#}"))
                 }
             });
         })

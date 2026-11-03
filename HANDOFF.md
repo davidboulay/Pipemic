@@ -43,7 +43,9 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   - App routing: `[[rule]] channel = "music" apps = ["spotify"]` in mixer.toml. Matches application.name / process.binary / node.name / portal app id, case-insensitive with `*` wildcard. The daemon sets `target.object` (Spa:Id serial) in the `default` metadata, once per stream, so moving an app by hand afterwards still sticks. On exit it clears those targets; verified that Spotify returned to the CalDigit output and that WirePlumber saved no target. Defaults: Spotify → Music; Google Chrome / chrome / google-chrome* → Browser.
 - Open bug: during the user's own test, Spotify was moved to Music and then ended up back on the default output while the daemon was still running. `target.node = -1` was found in the metadata. The cause isn't identified yet; KDE or pipewire-pulse are suspects.
 - Wave:3 quirk (seen twice on 2026-11-03): after a replug or profile change, the source can sit idle (rate 0) or deliver zeros. Toggling the card profile off and on fixes it. Separately, both the Wave:3 card and the laptop card were found switched "Off" (cause unknown; not our code).
-- Next: systemd user unit + `wavectl mix` showing rules; then wave-proto inside the daemon (mic mute/gain in the mixer).
+- systemd user unit `systemd/wavelinkd.service` (WantedBy=pipewire.service, Restart=on-failure); installed in ~/.config/systemd/user, binaries in ~/.local/bin.
+- Mic in the daemon (`mic.rs`): a USB thread polls msg 0 every 200 ms (pad mute shows up live), applies `{"cmd":"mic",...}` requests and reconnects after a replug. wave-proto now claims interface 3 per operation (with retry on Busy), so `wavectl get/set` work alongside the daemon. CLI: `wavectl mix mic gain 30 | mute | unmute | lowcut on | clipguard off`. Verified on the device: gain 38→37.5→38 and lowcut on/off, both read back byte-exact.
+- Next: live events on the socket (for a UI), then the libcosmic UI/applet.
 
 ## Still open on the Mac side
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.

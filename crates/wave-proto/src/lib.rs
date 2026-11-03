@@ -7,6 +7,7 @@ pub mod msg;
 
 pub use device::Wave3;
 pub use msg::{Config, Setting, Status, Version, VolumeSelect};
+pub use rusb::Error as RusbError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

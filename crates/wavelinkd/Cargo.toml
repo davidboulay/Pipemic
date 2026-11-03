@@ -7,4 +7,5 @@ license.workspace = true
 
 [dependencies]
 pipewire = "0.9"
+pipewire-sys = "0.9"
 anyhow.workspace = true

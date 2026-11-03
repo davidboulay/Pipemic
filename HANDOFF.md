@@ -32,7 +32,13 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - msg 1 decoded (raw touch signal; a tap toggles config byte 4).
 - LED test: byte 13 = 1 is stored but has no visible effect (two tries; restored to 0). Bytes 13–15 stay unconfirmed and aren't needed.
 - Repo: github.com/davidboulay/elgato-wave-link-linux (private).
-- `wavelinkd` slice 1: creates `wavelink.mix.{personal,stream,chat}` virtual sources (Audio/Source/Virtual, null-audio-sink); they're removed on exit. Next slice: channels + channel×mix volumes.
+- `wavelinkd` slice 2 (verified 2026-11-03):
+  - Channels: virtual sinks `wavelink.channel.{system,music,browser,voicechat}` plus the Wave:3 mic (matched by node.name prefix).
+  - Mixes: one in-process filter-chain each (two builtin `mixer` nodes L/R, max 8 channels). Stream and Chat are `Audio/Source` (`wavelink.mix.stream`, `wavelink.mix.chat`). Personal is a playback stream that WirePlumber routes to the default output.
+  - A registry-driven linker wires every channel into every mix and relinks when ports reappear.
+  - Gains: defaults in `model.rs` (mic off in Personal, voice chat off in Chat). Runtime change: `pw-cli s <id of wavelink.mix.X.in> Props '{ params = [ "mixL:Gain N" g "mixR:Gain N" g ] }'`, where N = channel index + 1 (mic = 1). Tested with a 440 Hz tone: 1153 → 0 when muted, back on restore.
+  - Known risk: if a `wavelink.channel.*` sink becomes the default output, Personal feeds back into itself. This needs a guard.
+- Next: config file + control interface (set gains/mute without pw-cli), then app → channel routing.
 
 ## Still open on the Mac side
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.

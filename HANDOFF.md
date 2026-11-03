@@ -45,7 +45,8 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Wave:3 quirk (seen twice on 2026-11-03): after a replug or profile change, the source can sit idle (rate 0) or deliver zeros. Toggling the card profile off and on fixes it. Separately, both the Wave:3 card and the laptop card were found switched "Off" (cause unknown; not our code).
 - systemd user unit `systemd/wavelinkd.service` (WantedBy=pipewire.service, Restart=on-failure); installed in ~/.config/systemd/user, binaries in ~/.local/bin.
 - Mic in the daemon (`mic.rs`): a USB thread polls msg 0 every 200 ms (pad mute shows up live), applies `{"cmd":"mic",...}` requests and reconnects after a replug. wave-proto now claims interface 3 per operation (with retry on Busy), so `wavectl get/set` work alongside the daemon. CLI: `wavectl mix mic gain 30 | mute | unmute | lowcut on | clipguard off`. Verified on the device: gain 38→37.5→38 and lowcut on/off, both read back byte-exact. User-verified 2026-11-03: CLI controls, replug reconnect, pad mute shown live.
-- Next: live events on the socket (for a UI), then the libcosmic UI/applet.
+- UI: `crates/wavelink-ui` (binary `wavelink`, iced 0.14). The user chose a standalone Rust app over libcosmic or a Plasma widget, for the widest distro coverage. It shows a channel × mix fader grid with mutes, mix volumes and a Wave:3 panel (gain, low cut, clipguard), and polls status 4×/s. User-verified working. It isn't installed yet (no .desktop entry).
+- Next, in the agreed order: (1) install `wavelink` + .desktop entry + icon; (2) design pass: vertical strips like Wave Link, live level meters; (3) mic noise suppression (RNNoise / DeepFilterNet) replacing Voice Focus; (4) Stream Deck / WebSocket API (needs Mac RE first).
 
 ## Still open on the Mac side
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.

@@ -31,7 +31,8 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Once, right after the rule was installed, the mic captured pure zeros (also with wavectl not running); a replug fixed it. Cause unknown; check this if it happens again.
 - msg 1 decoded (raw touch signal; a tap toggles config byte 4).
 - LED test: byte 13 = 1 is stored but has no visible effect (two tries; restored to 0). Bytes 13–15 stay unconfirmed and aren't needed.
-- Next: git init + first commit, then `wavelinkd`.
+- Repo: github.com/davidboulay/elgato-wave-link-linux (private).
+- `wavelinkd` slice 1: creates `wavelink.mix.{personal,stream,chat}` virtual sources (Audio/Source/Virtual, null-audio-sink); they're removed on exit. Next slice: channels + channel×mix volumes.
 
 ## Still open on the Mac side
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.

@@ -1,0 +1,10 @@
+[package]
+name = "wavelinkd"
+description = "Wave Link mixer daemon for PipeWire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pipewire = "0.9"
+anyhow.workspace = true

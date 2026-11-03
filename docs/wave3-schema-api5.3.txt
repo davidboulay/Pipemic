@@ -1,0 +1,36 @@
+/config/input_gain              :           21.0f (rw) | float [ 0.0f, 40.0f, 0.5f ] | Microphone gain in dB
+/config/input_mute              :           false (rw) |  bool | Microphone mute
+/config/clipguard_enable        :            true (rw) |  bool | Clipguard enable
+/config/lowcut_enable           :           false (rw) |  bool | Low-cut filter enable
+/config/headphone_volume        :          -17.5f (rw) | float [ -60.0f, 0.0f, 0.5f ] | Headphone output in dB
+/config/headphone_mute          :           false (rw) |  bool | Headphone output mute
+/config/direct_monitor          :            0.0f (rw) | float [ 0.0f, 100.0f, 5.0f ] | Direct monitoring/playback mix in percent
+/config/volume_select           :  2u (HEADPHONE) (rw) |  uint [ 1u, 3u, 1u ] | Knob control select ENUM: MIC_SETTINGS_T_volume_select_t LIMITS: [ 1, 3, 1 ], ENUM: MIC_SETTINGS_T_volume_select_t
+/config/all_leds_off            :           false (rw) |  bool | All LEDs are off
+/config/leds_flip               :           false (rw) |  bool | Reverse the direction of LEDs and knob to use when mic is used upside down (e.g., on a boom arm).
+/config/gain_lock               :           false (rw) |  bool | Ignore input volume change (SET_CUR) requests sent from the OS.
+/status/touch_pressed_ms        :              0u (r-) |  uint [ 0u, 4294967295u, 1u ] | 
+/status/touch_signal            :              0u (r-) |  uint [ 0u, 4294967295u, 1u ] | 
+/version/api_version/major      :              5u (r-) |  uint [ 0u, 255u, 1u ] | API version
+/version/api_version/minor      :              3u (r-) |  uint [ 0u, 255u, 1u ] | API version
+/version/vbus_voltage           :          3.285f (r-) | float [ -128.0f, 127.0f, 0.004f ] | VBUS voltage (for TESTING purposes).
+/version/mic_type               :              0u (r-) |  uint [ 0u, 255u, 1u ] | PCB type: Schubert=1, Strauss=2
+/version/hw_version_board       :              8u (r-) |  uint [ 0u, 255u, 1u ] | Board HW version= 1....20
+/version/bl/major               :              0u (r-) |  uint [ 0u, 255u, 1u ] | Bootloader version
+/version/bl/minor               :              3u (r-) |  uint [ 0u, 255u, 1u ] | Bootloader version
+/version/bl/patch               :              7u (r-) |  uint [ 0u, 255u, 1u ] | Bootloader version
+/version/bl/build               :              3u (r-) |  uint [ 0u, 4294967295u, 1u ] | Bootloader version
+/version/bl/commit              :                 (r-) |   str | Bootloader version
+/version/fw/major               :              1u (r-) |  uint [ 0u, 255u, 1u ] | FW version
+/version/fw/minor               :              2u (r-) |  uint [ 0u, 255u, 1u ] | FW version
+/version/fw/patch               :              2u (r-) |  uint [ 0u, 255u, 1u ] | FW version
+/version/fw/build               :              3u (r-) |  uint [ 0u, 4294967295u, 1u ] | FW version
+/version/fw/commit              :        0b4251ee (r-) |   str | FW version
+/version/serial                 :    SERIAL000001 (r-) |   str | MIC Serial number, 12character ASCII string, also in the USB descriptors
+/version/touch_signal_thr/lower :            900u (r-) |  uint [ 0u, 65535u, 1u ] | Touch key: upper and lower threshold value
+/version/touch_signal_thr/upper :           1500u (r-) |  uint [ 0u, 65535u, 1u ] | Touch key: upper and lower threshold value
+
+
+ENUM: MIC_SETTINGS_T_volume_select_t:
+: 1 (MIC), 2 (HEADPHONE), 3 (MIX), 
+

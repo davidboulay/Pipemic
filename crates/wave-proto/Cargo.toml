@@ -1,0 +1,10 @@
+[package]
+name = "wave-proto"
+description = "Elgato Wave:3 USB control protocol (LEWITT WaveAPI 5.3, legacy UAC1 vendor strategy)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusb.workspace = true
+thiserror.workspace = true

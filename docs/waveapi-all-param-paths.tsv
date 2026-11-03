@@ -1,0 +1,645 @@
+/version/api/major	
+/version/api/minor	
+/version/serial	Lewitt
+/version	) | 
+/ducking	
+/0/attack_ms	0 ( XLR Mic 1 ) ducking attack time in ms
+/0/release_ms	0 ( XLR Mic 1 ) ducking release time in ms
+/0/key_signal/0	0 ( XLR Mic 1 ) ducking key signal 0 ( XLR Mic 1 )
+/0/key_signal/1	0 ( XLR Mic 1 ) ducking key signal 1 ( XLR Mic 2 )
+/0/key_signal/2	0 ( XLR Mic 1 ) ducking key signal 2 ( USB Aux In )
+/0/key_signal/3	0 ( XLR Mic 1 ) ducking key signal 3 ( Line-in )
+/0/key_signal/4	0 ( XLR Mic 1 ) ducking key signal 4 ( System )
+/0/key_signal/5	0 ( XLR Mic 1 ) ducking key signal 5 ( Music )
+/0/key_signal/6	0 ( XLR Mic 1 ) ducking key signal 6 ( Browser )
+/0/key_signal/7	0 ( XLR Mic 1 ) ducking key signal 7 ( Voice Chat )
+/0/key_signal/8	0 ( XLR Mic 1 ) ducking key signal 8 ( SFX )
+/0/key_signal/9	0 ( XLR Mic 1 ) ducking key signal 9 ( Game )
+/0/key_signal/10	0 ( XLR Mic 1 ) ducking key signal 10 ( Aux1 )
+/0/key_signal/11	0 ( XLR Mic 1 ) ducking key signal 11 ( Aux2 )
+/1/attack_ms	1 ( XLR Mic 2 ) ducking attack time in ms
+/1/release_ms	1 ( XLR Mic 2 ) ducking release time in ms
+/1/key_signal/0	1 ( XLR Mic 2 ) ducking key signal 0 ( XLR Mic 1 )
+/1/key_signal/1	1 ( XLR Mic 2 ) ducking key signal 1 ( XLR Mic 2 )
+/1/key_signal/2	1 ( XLR Mic 2 ) ducking key signal 2 ( USB Aux In )
+/1/key_signal/3	1 ( XLR Mic 2 ) ducking key signal 3 ( Line-in )
+/1/key_signal/4	1 ( XLR Mic 2 ) ducking key signal 4 ( System )
+/1/key_signal/5	1 ( XLR Mic 2 ) ducking key signal 5 ( Music )
+/1/key_signal/6	1 ( XLR Mic 2 ) ducking key signal 6 ( Browser )
+/1/key_signal/7	1 ( XLR Mic 2 ) ducking key signal 7 ( Voice Chat )
+/1/key_signal/8	1 ( XLR Mic 2 ) ducking key signal 8 ( SFX )
+/1/key_signal/9	1 ( XLR Mic 2 ) ducking key signal 9 ( Game )
+/1/key_signal/10	1 ( XLR Mic 2 ) ducking key signal 10 ( Aux1 )
+/1/key_signal/11	1 ( XLR Mic 2 ) ducking key signal 11 ( Aux2 )
+/2/attack_ms	2 ( USB Aux In ) ducking attack time in ms
+/2/release_ms	2 ( USB Aux In ) ducking release time in ms
+/2/key_signal/0	2 ( USB Aux In ) ducking key signal 0 ( XLR Mic 1 )
+/2/key_signal/1	2 ( USB Aux In ) ducking key signal 1 ( XLR Mic 2 )
+/2/key_signal/2	2 ( USB Aux In ) ducking key signal 2 ( USB Aux In )
+/2/key_signal/3	2 ( USB Aux In ) ducking key signal 3 ( Line-in )
+/2/key_signal/4	2 ( USB Aux In ) ducking key signal 4 ( System )
+/2/key_signal/5	2 ( USB Aux In ) ducking key signal 5 ( Music )
+/2/key_signal/6	2 ( USB Aux In ) ducking key signal 6 ( Browser )
+/2/key_signal/7	2 ( USB Aux In ) ducking key signal 7 ( Voice Chat )
+/2/key_signal/8	2 ( USB Aux In ) ducking key signal 8 ( SFX )
+/2/key_signal/9	2 ( USB Aux In ) ducking key signal 9 ( Game )
+/2/key_signal/10	2 ( USB Aux In ) ducking key signal 10 ( Aux1 )
+/2/key_signal/11	2 ( USB Aux In ) ducking key signal 11 ( Aux2 )
+/3/attack_ms	3 ( Line-in ) ducking attack time in ms
+/3/release_ms	3 ( Line-in ) ducking release time in ms
+/3/key_signal/0	3 ( Line-in ) ducking key signal 0 ( XLR Mic 1 )
+/3/key_signal/1	3 ( Line-in ) ducking key signal 1 ( XLR Mic 2 )
+/3/key_signal/2	3 ( Line-in ) ducking key signal 2 ( USB Aux In )
+/3/key_signal/3	3 ( Line-in ) ducking key signal 3 ( Line-in )
+/3/key_signal/4	3 ( Line-in ) ducking key signal 4 ( System )
+/3/key_signal/5	3 ( Line-in ) ducking key signal 5 ( Music )
+/3/key_signal/6	3 ( Line-in ) ducking key signal 6 ( Browser )
+/3/key_signal/7	3 ( Line-in ) ducking key signal 7 ( Voice Chat )
+/3/key_signal/8	3 ( Line-in ) ducking key signal 8 ( SFX )
+/3/key_signal/9	3 ( Line-in ) ducking key signal 9 ( Game )
+/3/key_signal/10	3 ( Line-in ) ducking key signal 10 ( Aux1 )
+/3/key_signal/11	3 ( Line-in ) ducking key signal 11 ( Aux2 )
+/4/attack_ms	4 ( System ) ducking attack time in ms
+/4/release_ms	4 ( System ) ducking release time in ms
+/4/key_signal/0	4 ( System ) ducking key signal 0 ( XLR Mic 1 )
+/4/key_signal/1	4 ( System ) ducking key signal 1 ( XLR Mic 2 )
+/4/key_signal/2	4 ( System ) ducking key signal 2 ( USB Aux In )
+/4/key_signal/3	4 ( System ) ducking key signal 3 ( Line-in )
+/4/key_signal/4	4 ( System ) ducking key signal 4 ( System )
+/4/key_signal/5	4 ( System ) ducking key signal 5 ( Music )
+/4/key_signal/6	4 ( System ) ducking key signal 6 ( Browser )
+/4/key_signal/7	4 ( System ) ducking key signal 7 ( Voice Chat )
+/4/key_signal/8	4 ( System ) ducking key signal 8 ( SFX )
+/4/key_signal/9	4 ( System ) ducking key signal 9 ( Game )
+/4/key_signal/10	4 ( System ) ducking key signal 10 ( Aux1 )
+/4/key_signal/11	4 ( System ) ducking key signal 11 ( Aux2 )
+/5/attack_ms	5 ( Music ) ducking attack time in ms
+/5/release_ms	5 ( Music ) ducking release time in ms
+/5/key_signal/0	5 ( Music ) ducking key signal 0 ( XLR Mic 1 )
+/5/key_signal/1	5 ( Music ) ducking key signal 1 ( XLR Mic 2 )
+/5/key_signal/2	5 ( Music ) ducking key signal 2 ( USB Aux In )
+/5/key_signal/3	5 ( Music ) ducking key signal 3 ( Line-in )
+/5/key_signal/4	5 ( Music ) ducking key signal 4 ( System )
+/5/key_signal/5	5 ( Music ) ducking key signal 5 ( Music )
+/5/key_signal/6	5 ( Music ) ducking key signal 6 ( Browser )
+/5/key_signal/7	5 ( Music ) ducking key signal 7 ( Voice Chat )
+/5/key_signal/8	5 ( Music ) ducking key signal 8 ( SFX )
+/5/key_signal/9	5 ( Music ) ducking key signal 9 ( Game )
+/5/key_signal/10	5 ( Music ) ducking key signal 10 ( Aux1 )
+/5/key_signal/11	5 ( Music ) ducking key signal 11 ( Aux2 )
+/6/attack_ms	6 ( Browser ) ducking attack time in ms
+/6/release_ms	6 ( Browser ) ducking release time in ms
+/6/key_signal/0	6 ( Browser ) ducking key signal 0 ( XLR Mic 1 )
+/6/key_signal/1	6 ( Browser ) ducking key signal 1 ( XLR Mic 2 )
+/6/key_signal/2	6 ( Browser ) ducking key signal 2 ( USB Aux In )
+/6/key_signal/3	6 ( Browser ) ducking key signal 3 ( Line-in )
+/6/key_signal/4	6 ( Browser ) ducking key signal 4 ( System )
+/6/key_signal/5	6 ( Browser ) ducking key signal 5 ( Music )
+/6/key_signal/6	6 ( Browser ) ducking key signal 6 ( Browser )
+/6/key_signal/7	6 ( Browser ) ducking key signal 7 ( Voice Chat )
+/6/key_signal/8	6 ( Browser ) ducking key signal 8 ( SFX )
+/6/key_signal/9	6 ( Browser ) ducking key signal 9 ( Game )
+/6/key_signal/10	6 ( Browser ) ducking key signal 10 ( Aux1 )
+/6/key_signal/11	6 ( Browser ) ducking key signal 11 ( Aux2 )
+/7/attack_ms	7 ( Voice Chat ) ducking attack time in ms
+/7/release_ms	7 ( Voice Chat ) ducking release time in ms
+/7/key_signal/0	7 ( Voice Chat ) ducking key signal 0 ( XLR Mic 1 )
+/7/key_signal/1	7 ( Voice Chat ) ducking key signal 1 ( XLR Mic 2 )
+/7/key_signal/2	7 ( Voice Chat ) ducking key signal 2 ( USB Aux In )
+/7/key_signal/3	7 ( Voice Chat ) ducking key signal 3 ( Line-in )
+/7/key_signal/4	7 ( Voice Chat ) ducking key signal 4 ( System )
+/7/key_signal/5	7 ( Voice Chat ) ducking key signal 5 ( Music )
+/7/key_signal/6	7 ( Voice Chat ) ducking key signal 6 ( Browser )
+/7/key_signal/7	7 ( Voice Chat ) ducking key signal 7 ( Voice Chat )
+/7/key_signal/8	7 ( Voice Chat ) ducking key signal 8 ( SFX )
+/7/key_signal/9	7 ( Voice Chat ) ducking key signal 9 ( Game )
+/7/key_signal/10	7 ( Voice Chat ) ducking key signal 10 ( Aux1 )
+/7/key_signal/11	7 ( Voice Chat ) ducking key signal 11 ( Aux2 )
+/8/attack_ms	8 ( SFX ) ducking attack time in ms
+/8/release_ms	8 ( SFX ) ducking release time in ms
+/8/key_signal/0	8 ( SFX ) ducking key signal 0 ( XLR Mic 1 )
+/8/key_signal/1	8 ( SFX ) ducking key signal 1 ( XLR Mic 2 )
+/8/key_signal/2	8 ( SFX ) ducking key signal 2 ( USB Aux In )
+/8/key_signal/3	8 ( SFX ) ducking key signal 3 ( Line-in )
+/8/key_signal/4	8 ( SFX ) ducking key signal 4 ( System )
+/8/key_signal/5	8 ( SFX ) ducking key signal 5 ( Music )
+/8/key_signal/6	8 ( SFX ) ducking key signal 6 ( Browser )
+/8/key_signal/7	8 ( SFX ) ducking key signal 7 ( Voice Chat )
+/8/key_signal/8	8 ( SFX ) ducking key signal 8 ( SFX )
+/8/key_signal/9	8 ( SFX ) ducking key signal 9 ( Game )
+/8/key_signal/10	8 ( SFX ) ducking key signal 10 ( Aux1 )
+/8/key_signal/11	8 ( SFX ) ducking key signal 11 ( Aux2 )
+/9/attack_ms	9 ( Game ) ducking attack time in ms
+/9/release_ms	9 ( Game ) ducking release time in ms
+/9/key_signal/0	9 ( Game ) ducking key signal 0 ( XLR Mic 1 )
+/9/key_signal/1	9 ( Game ) ducking key signal 1 ( XLR Mic 2 )
+/9/key_signal/2	9 ( Game ) ducking key signal 2 ( USB Aux In )
+/9/key_signal/3	9 ( Game ) ducking key signal 3 ( Line-in )
+/9/key_signal/4	9 ( Game ) ducking key signal 4 ( System )
+/9/key_signal/5	9 ( Game ) ducking key signal 5 ( Music )
+/9/key_signal/6	9 ( Game ) ducking key signal 6 ( Browser )
+/9/key_signal/7	9 ( Game ) ducking key signal 7 ( Voice Chat )
+/9/key_signal/8	9 ( Game ) ducking key signal 8 ( SFX )
+/9/key_signal/9	9 ( Game ) ducking key signal 9 ( Game )
+/9/key_signal/10	9 ( Game ) ducking key signal 10 ( Aux1 )
+/9/key_signal/11	9 ( Game ) ducking key signal 11 ( Aux2 )
+/10/attack_ms	10 ( Aux1 ) ducking attack time in ms
+/10/release_ms	10 ( Aux1 ) ducking release time in ms
+/10/key_signal/0	10 ( Aux1 ) ducking key signal 0 ( XLR Mic 1 )
+/10/key_signal/1	10 ( Aux1 ) ducking key signal 1 ( XLR Mic 2 )
+/10/key_signal/2	10 ( Aux1 ) ducking key signal 2 ( USB Aux In )
+/10/key_signal/3	10 ( Aux1 ) ducking key signal 3 ( Line-in )
+/10/key_signal/4	10 ( Aux1 ) ducking key signal 4 ( System )
+/10/key_signal/5	10 ( Aux1 ) ducking key signal 5 ( Music )
+/10/key_signal/6	10 ( Aux1 ) ducking key signal 6 ( Browser )
+/10/key_signal/7	10 ( Aux1 ) ducking key signal 7 ( Voice Chat )
+/10/key_signal/8	10 ( Aux1 ) ducking key signal 8 ( SFX )
+/10/key_signal/9	10 ( Aux1 ) ducking key signal 9 ( Game )
+/10/key_signal/10	10 ( Aux1 ) ducking key signal 10 ( Aux1 )
+/10/key_signal/11	10 ( Aux1 ) ducking key signal 11 ( Aux2 )
+/11/attack_ms	11 ( Aux2 ) ducking attack time in ms
+/11/release_ms	11 ( Aux2 ) ducking release time in ms
+/11/key_signal/0	11 ( Aux2 ) ducking key signal 0 ( XLR Mic 1 )
+/11/key_signal/1	11 ( Aux2 ) ducking key signal 1 ( XLR Mic 2 )
+/11/key_signal/2	11 ( Aux2 ) ducking key signal 2 ( USB Aux In )
+/11/key_signal/3	11 ( Aux2 ) ducking key signal 3 ( Line-in )
+/11/key_signal/4	11 ( Aux2 ) ducking key signal 4 ( System )
+/11/key_signal/5	11 ( Aux2 ) ducking key signal 5 ( Music )
+/11/key_signal/6	11 ( Aux2 ) ducking key signal 6 ( Browser )
+/11/key_signal/7	11 ( Aux2 ) ducking key signal 7 ( Voice Chat )
+/11/key_signal/8	11 ( Aux2 ) ducking key signal 8 ( SFX )
+/11/key_signal/9	11 ( Aux2 ) ducking key signal 9 ( Game )
+/11/key_signal/10	11 ( Aux2 ) ducking key signal 10 ( Aux1 )
+/11/key_signal/11	11 ( Aux2 ) ducking key signal 11 ( Aux2 )
+/standalone_ducking	
+/status	
+/xlr1_connected	XLR Mic 1 is connected
+/xlr2_connected	XLR Mic 2 is connected
+/usbin_connected	USB Aux is connected
+/linein_connected	Line-in is connected
+/lineout_connected	Line-out is connected
+/headphone1_connected	Headphone 1 connected
+/headphone2_connected	Headphone 2 connected
+/xlr1_clipping_counter	Number of ADC clipping events at the XLR1 input. Use hasChanged() to detect clipping.
+/xlr2_clipping_counter	Number of ADC clipping events at the XLR2 input. Use hasChanged() to detect clipping.
+/autosetup_result	Autosetup result:
+/autosetup_lock	Autosetup lock state
+/autosetup_progress	Autosetup progress in percent.
+/autosetup_eventid	Autosetup event ID (same as /trigger/id)
+/sample_rate_hz	Current device sample rate in Hz.
+/standalone_isdirty	Standalone settings differs from the current settings.
+/setting_store_pending	Settings store to the persistent memory is pending.
+/suspended_state_active	Suspended state is active. true means a faulty state and a manual wake-up needs to be performed by setting_store_pending /trigger/event=VEN_TRIGGER_WAKEUP
+/mic_det_value/0	Current microphone detection signal for 0 ( XLR Mic 1 )
+/mic_det_value/1	Current microphone detection signal for 1 ( XLR Mic 2 )
+/routing	
+/mixer/0/input_volume/0	Mixer 0 ( Personal Mix ) fader for input 0 ( XLR Mic 1 ) in dB
+/mixer/0/input_volume/1	Mixer 0 ( Personal Mix ) fader for input 1 ( XLR Mic 2 ) in dB
+/mixer/0/input_volume/2	Mixer 0 ( Personal Mix ) fader for input 2 ( USB Aux In ) in dB
+/mixer/0/input_volume/3	Mixer 0 ( Personal Mix ) fader for input 3 ( Line-in ) in dB
+/mixer/0/input_volume/4	Mixer 0 ( Personal Mix ) fader for input 4 ( System ) in dB
+/mixer/0/input_volume/5	Mixer 0 ( Personal Mix ) fader for input 5 ( Music ) in dB
+/mixer/0/input_volume/6	Mixer 0 ( Personal Mix ) fader for input 6 ( Browser ) in dB
+/mixer/0/input_volume/7	Mixer 0 ( Personal Mix ) fader for input 7 ( Voice Chat ) in dB
+/mixer/0/input_volume/8	Mixer 0 ( Personal Mix ) fader for input 8 ( SFX ) in dB
+/mixer/0/input_volume/9	Mixer 0 ( Personal Mix ) fader for input 9 ( Game ) in dB
+/mixer/0/input_volume/10	Mixer 0 ( Personal Mix ) fader for input 10 ( Aux1 ) in dB
+/mixer/0/input_volume/11	Mixer 0 ( Personal Mix ) fader for input 11 ( Aux2 ) in dB
+/mixer/0/input_enabled/0	Mixer 0 ( Personal Mix ) input 0 ( XLR Mic 1 ) enable
+/mixer/0/input_enabled/1	Mixer 0 ( Personal Mix ) input 1 ( XLR Mic 2 ) enable
+/mixer/0/input_enabled/2	Mixer 0 ( Personal Mix ) input 2 ( USB Aux In ) enable
+/mixer/0/input_enabled/3	Mixer 0 ( Personal Mix ) input 3 ( Line-in ) enable
+/mixer/0/input_enabled/4	Mixer 0 ( Personal Mix ) input 4 ( System ) enable
+/mixer/0/input_enabled/5	Mixer 0 ( Personal Mix ) input 5 ( Music ) enable
+/mixer/0/input_enabled/6	Mixer 0 ( Personal Mix ) input 6 ( Browser ) enable
+/mixer/0/input_enabled/7	Mixer 0 ( Personal Mix ) input 7 ( Voice Chat ) enable
+/mixer/0/input_enabled/8	Mixer 0 ( Personal Mix ) input 8 ( SFX ) enable
+/mixer/0/input_enabled/9	Mixer 0 ( Personal Mix ) input 9 ( Game ) enable
+/mixer/0/input_enabled/10	Mixer 0 ( Personal Mix ) input 10 ( Aux1 ) enable
+/mixer/0/input_enabled/11	Mixer 0 ( Personal Mix ) input 11 ( Aux2 ) enable
+/mixer/0/maximizer_bypassed	Mixer 0 ( Personal Mix ) maximizer bypass
+/mixer/0/maximizer	Mixer 0 ( Personal Mix ) maximizer knob val maximizer bypass
+/mixer/1/input_volume/0	Mixer 1 ( Chat Mix ) fader for input 0 ( XLR Mic 1 ) in dB
+/mixer/1/input_volume/1	Mixer 1 ( Chat Mix ) fader for input 1 ( XLR Mic 2 ) in dB
+/mixer/1/input_volume/2	Mixer 1 ( Chat Mix ) fader for input 2 ( USB Aux In ) in dB
+/mixer/1/input_volume/3	Mixer 1 ( Chat Mix ) fader for input 3 ( Line-in ) in dB
+/mixer/1/input_volume/4	Mixer 1 ( Chat Mix ) fader for input 4 ( System ) in dB
+/mixer/1/input_volume/5	Mixer 1 ( Chat Mix ) fader for input 5 ( Music ) in dB
+/mixer/1/input_volume/6	Mixer 1 ( Chat Mix ) fader for input 6 ( Browser ) in dB
+/mixer/1/input_volume/7	Mixer 1 ( Chat Mix ) fader for input 7 ( Voice Chat ) in dB
+/mixer/1/input_volume/8	Mixer 1 ( Chat Mix ) fader for input 8 ( SFX ) in dB
+/mixer/1/input_volume/9	Mixer 1 ( Chat Mix ) fader for input 9 ( Game ) in dB
+/mixer/1/input_volume/10	Mixer 1 ( Chat Mix ) fader for input 10 ( Aux1 ) in dB
+/mixer/1/input_volume/11	Mixer 1 ( Chat Mix ) fader for input 11 ( Aux2 ) in dB
+/mixer/1/input_enabled/0	Mixer 1 ( Chat Mix ) input 0 ( XLR Mic 1 ) enable
+/mixer/1/input_enabled/1	Mixer 1 ( Chat Mix ) input 1 ( XLR Mic 2 ) enable
+/mixer/1/input_enabled/2	Mixer 1 ( Chat Mix ) input 2 ( USB Aux In ) enable
+/mixer/1/input_enabled/3	Mixer 1 ( Chat Mix ) input 3 ( Line-in ) enable
+/mixer/1/input_enabled/4	Mixer 1 ( Chat Mix ) input 4 ( System ) enable
+/mixer/1/input_enabled/5	Mixer 1 ( Chat Mix ) input 5 ( Music ) enable
+/mixer/1/input_enabled/6	Mixer 1 ( Chat Mix ) input 6 ( Browser ) enable
+/mixer/1/input_enabled/7	Mixer 1 ( Chat Mix ) input 7 ( Voice Chat ) enable
+/mixer/1/input_enabled/8	Mixer 1 ( Chat Mix ) input 8 ( SFX ) enable
+/mixer/1/input_enabled/9	Mixer 1 ( Chat Mix ) input 9 ( Game ) enable
+/mixer/1/input_enabled/10	Mixer 1 ( Chat Mix ) input 10 ( Aux1 ) enable
+/mixer/1/input_enabled/11	Mixer 1 ( Chat Mix ) input 11 ( Aux2 ) enable
+/mixer/1/maximizer_bypassed	Mixer 1 ( Chat Mix ) maximizer bypass
+/mixer/1/maximizer	Mixer 1 ( Chat Mix ) maximizer knob val maximizer bypass
+/mixer/2/input_volume/0	Mixer 2 ( Stream Mix ) fader for input 0 ( XLR Mic 1 ) in dB
+/mixer/2/input_volume/1	Mixer 2 ( Stream Mix ) fader for input 1 ( XLR Mic 2 ) in dB
+/mixer/2/input_volume/2	Mixer 2 ( Stream Mix ) fader for input 2 ( USB Aux In ) in dB
+/mixer/2/input_volume/3	Mixer 2 ( Stream Mix ) fader for input 3 ( Line-in ) in dB
+/mixer/2/input_volume/4	Mixer 2 ( Stream Mix ) fader for input 4 ( System ) in dB
+/mixer/2/input_volume/5	Mixer 2 ( Stream Mix ) fader for input 5 ( Music ) in dB
+/mixer/2/input_volume/6	Mixer 2 ( Stream Mix ) fader for input 6 ( Browser ) in dB
+/mixer/2/input_volume/7	Mixer 2 ( Stream Mix ) fader for input 7 ( Voice Chat ) in dB
+/mixer/2/input_volume/8	Mixer 2 ( Stream Mix ) fader for input 8 ( SFX ) in dB
+/mixer/2/input_volume/9	Mixer 2 ( Stream Mix ) fader for input 9 ( Game ) in dB
+/mixer/2/input_volume/10	Mixer 2 ( Stream Mix ) fader for input 10 ( Aux1 ) in dB
+/mixer/2/input_volume/11	Mixer 2 ( Stream Mix ) fader for input 11 ( Aux2 ) in dB
+/mixer/2/input_enabled/0	Mixer 2 ( Stream Mix ) input 0 ( XLR Mic 1 ) enable
+/mixer/2/input_enabled/1	Mixer 2 ( Stream Mix ) input 1 ( XLR Mic 2 ) enable
+/mixer/2/input_enabled/2	Mixer 2 ( Stream Mix ) input 2 ( USB Aux In ) enable
+/mixer/2/input_enabled/3	Mixer 2 ( Stream Mix ) input 3 ( Line-in ) enable
+/mixer/2/input_enabled/4	Mixer 2 ( Stream Mix ) input 4 ( System ) enable
+/mixer/2/input_enabled/5	Mixer 2 ( Stream Mix ) input 5 ( Music ) enable
+/mixer/2/input_enabled/6	Mixer 2 ( Stream Mix ) input 6 ( Browser ) enable
+/mixer/2/input_enabled/7	Mixer 2 ( Stream Mix ) input 7 ( Voice Chat ) enable
+/mixer/2/input_enabled/8	Mixer 2 ( Stream Mix ) input 8 ( SFX ) enable
+/mixer/2/input_enabled/9	Mixer 2 ( Stream Mix ) input 9 ( Game ) enable
+/mixer/2/input_enabled/10	Mixer 2 ( Stream Mix ) input 10 ( Aux1 ) enable
+/mixer/2/input_enabled/11	Mixer 2 ( Stream Mix ) input 11 ( Aux2 ) enable
+/mixer/2/maximizer_bypassed	Mixer 2 ( Stream Mix ) maximizer bypass
+/mixer/2/maximizer	Mixer 2 ( Stream Mix ) maximizer knob val maximizer bypass
+/mixer/3/input_volume/0	Mixer 3 ( Record Mix ) fader for input 0 ( XLR Mic 1 ) in dB
+/mixer/3/input_volume/1	Mixer 3 ( Record Mix ) fader for input 1 ( XLR Mic 2 ) in dB
+/mixer/3/input_volume/2	Mixer 3 ( Record Mix ) fader for input 2 ( USB Aux In ) in dB
+/mixer/3/input_volume/3	Mixer 3 ( Record Mix ) fader for input 3 ( Line-in ) in dB
+/mixer/3/input_volume/4	Mixer 3 ( Record Mix ) fader for input 4 ( System ) in dB
+/mixer/3/input_volume/5	Mixer 3 ( Record Mix ) fader for input 5 ( Music ) in dB
+/mixer/3/input_volume/6	Mixer 3 ( Record Mix ) fader for input 6 ( Browser ) in dB
+/mixer/3/input_volume/7	Mixer 3 ( Record Mix ) fader for input 7 ( Voice Chat ) in dB
+/mixer/3/input_volume/8	Mixer 3 ( Record Mix ) fader for input 8 ( SFX ) in dB
+/mixer/3/input_volume/9	Mixer 3 ( Record Mix ) fader for input 9 ( Game ) in dB
+/mixer/3/input_volume/10	Mixer 3 ( Record Mix ) fader for input 10 ( Aux1 ) in dB
+/mixer/3/input_volume/11	Mixer 3 ( Record Mix ) fader for input 11 ( Aux2 ) in dB
+/mixer/3/input_enabled/0	Mixer 3 ( Record Mix ) input 0 ( XLR Mic 1 ) enable
+/mixer/3/input_enabled/1	Mixer 3 ( Record Mix ) input 1 ( XLR Mic 2 ) enable
+/mixer/3/input_enabled/2	Mixer 3 ( Record Mix ) input 2 ( USB Aux In ) enable
+/mixer/3/input_enabled/3	Mixer 3 ( Record Mix ) input 3 ( Line-in ) enable
+/mixer/3/input_enabled/4	Mixer 3 ( Record Mix ) input 4 ( System ) enable
+/mixer/3/input_enabled/5	Mixer 3 ( Record Mix ) input 5 ( Music ) enable
+/mixer/3/input_enabled/6	Mixer 3 ( Record Mix ) input 6 ( Browser ) enable
+/mixer/3/input_enabled/7	Mixer 3 ( Record Mix ) input 7 ( Voice Chat ) enable
+/mixer/3/input_enabled/8	Mixer 3 ( Record Mix ) input 8 ( SFX ) enable
+/mixer/3/input_enabled/9	Mixer 3 ( Record Mix ) input 9 ( Game ) enable
+/mixer/3/input_enabled/10	Mixer 3 ( Record Mix ) input 10 ( Aux1 ) enable
+/mixer/3/input_enabled/11	Mixer 3 ( Record Mix ) input 11 ( Aux2 ) enable
+/mixer/3/maximizer_bypassed	Mixer 3 ( Record Mix ) maximizer bypass
+/mixer/3/maximizer	Mixer 3 ( Record Mix ) maximizer knob val maximizer bypass
+/mixer/4/input_volume/0	Mixer 4 ( Aux Mix ) fader for input 0 ( XLR Mic 1 ) in dB
+/mixer/4/input_volume/1	Mixer 4 ( Aux Mix ) fader for input 1 ( XLR Mic 2 ) in dB
+/mixer/4/input_volume/2	Mixer 4 ( Aux Mix ) fader for input 2 ( USB Aux In ) in dB
+/mixer/4/input_volume/3	Mixer 4 ( Aux Mix ) fader for input 3 ( Line-in ) in dB
+/mixer/4/input_volume/4	Mixer 4 ( Aux Mix ) fader for input 4 ( System ) in dB
+/mixer/4/input_volume/5	Mixer 4 ( Aux Mix ) fader for input 5 ( Music ) in dB
+/mixer/4/input_volume/6	Mixer 4 ( Aux Mix ) fader for input 6 ( Browser ) in dB
+/mixer/4/input_volume/7	Mixer 4 ( Aux Mix ) fader for input 7 ( Voice Chat ) in dB
+/mixer/4/input_volume/8	Mixer 4 ( Aux Mix ) fader for input 8 ( SFX ) in dB
+/mixer/4/input_volume/9	Mixer 4 ( Aux Mix ) fader for input 9 ( Game ) in dB
+/mixer/4/input_volume/10	Mixer 4 ( Aux Mix ) fader for input 10 ( Aux1 ) in dB
+/mixer/4/input_volume/11	Mixer 4 ( Aux Mix ) fader for input 11 ( Aux2 ) in dB
+/mixer/4/input_enabled/0	Mixer 4 ( Aux Mix ) input 0 ( XLR Mic 1 ) enable
+/mixer/4/input_enabled/1	Mixer 4 ( Aux Mix ) input 1 ( XLR Mic 2 ) enable
+/mixer/4/input_enabled/2	Mixer 4 ( Aux Mix ) input 2 ( USB Aux In ) enable
+/mixer/4/input_enabled/3	Mixer 4 ( Aux Mix ) input 3 ( Line-in ) enable
+/mixer/4/input_enabled/4	Mixer 4 ( Aux Mix ) input 4 ( System ) enable
+/mixer/4/input_enabled/5	Mixer 4 ( Aux Mix ) input 5 ( Music ) enable
+/mixer/4/input_enabled/6	Mixer 4 ( Aux Mix ) input 6 ( Browser ) enable
+/mixer/4/input_enabled/7	Mixer 4 ( Aux Mix ) input 7 ( Voice Chat ) enable
+/mixer/4/input_enabled/8	Mixer 4 ( Aux Mix ) input 8 ( SFX ) enable
+/mixer/4/input_enabled/9	Mixer 4 ( Aux Mix ) input 9 ( Game ) enable
+/mixer/4/input_enabled/10	Mixer 4 ( Aux Mix ) input 10 ( Aux1 ) enable
+/mixer/4/input_enabled/11	Mixer 4 ( Aux Mix ) input 11 ( Aux2 ) enable
+/mixer/4/maximizer_bypassed	Mixer 4 ( Aux Mix ) maximizer bypass
+/mixer/4/maximizer	Mixer 4 ( Aux Mix ) maximizer knob val maximizer bypass
+/hw_outputs/0/source_select	HW audio output 0 ( Headphone 1 ) source select:
+/hw_outputs/1/source_select	HW audio output 1 ( Headphone 2 ) source select:
+/hw_outputs/2/source_select	HW audio output 2 ( USB Aux Out ) source select:
+/hw_outputs/3/source_select	HW audio output 3 ( Line-out ) source select:
+/usb_outputs/0/source_select	) USB audio output 0 ( XLR Mic 1 ) source select:
+/usb_outputs/0/limiter_bypassed	) USB audio output 0 ( XLR Mic 1 ) limiter bypassed
+/usb_outputs/1/source_select	) USB audio output 1 ( XLR Mic 2 ) source select:
+/usb_outputs/1/limiter_bypassed	) USB audio output 1 ( XLR Mic 2 ) limiter bypassed
+/usb_outputs/2/source_select	) USB audio output 2 ( USB in ) source select:
+/usb_outputs/2/limiter_bypassed	) USB audio output 2 ( USB in ) limiter bypassed
+/usb_outputs/3/source_select	) USB audio output 3 ( Line-in ) source select:
+/usb_outputs/3/limiter_bypassed	) USB audio output 3 ( Line-in ) limiter bypassed
+/standalone_routing	
+/input	
+/xlr1/gain	XLR1 input gain in dB
+/xlr1/mute	XLR1 input mute
+/xlr1/vst_enabled	XLR1 input vst insert is enabled
+/xlr1/lowcut_enabled	XLR1 input lowcut is enabled
+/xlr1/phantom_enabled	XLR1 input phantom power is enabled
+/xlr1/expander_enabled	XLR1 input expander is enabled
+/xlr1/limiter_bypassed	XLR1 input limiter bypass
+/xlr1/equalizer_enabled	XLR1 input equalizer is enabled
+/xlr1/compressor_enabled	XLR1 input compressor is enabled
+/xlr1/bettermaker_enabled	XLR1 input bettermaker is enabled
+/xlr1/sample_recorder_enabled	XLR1 input sample recorder is enabled
+/xlr1/dspfx/expander/ratio	XLR1 input expander ratio
+/xlr1/dspfx/expander/attack_ms	XLR1 input expander attack time in ms
+/xlr1/dspfx/expander/release_ms	XLR1 input expander release time in ms
+/xlr1/dspfx/bettermaker/knob	XLR1 input bettermaker effect strength in percent
+/xlr1/dspfx/compressor/ratio	XLR1 input compressor ratio
+/xlr1/dspfx/compressor/attack_ms	XLR1 input compressor attack time in
+/xlr1/dspfx/compressor/release_ms	XLR1 input compressor release time in ms
+/xlr1/dspfx/equalizer/band/0/type	XLR1 input equalizer band type
+/xlr1/dspfx/equalizer/band/0/enabled	XLR1 input equalizer band enabled
+/xlr1/dspfx/equalizer/band/0/quality_log10	XLR1 input equalizer band log10 of the quality parameter (-1,0,-1) corresponds to (0.1,1,10)
+/xlr1/dspfx/equalizer/band/1/type	
+/xlr1/dspfx/equalizer/band/1/enabled	
+/xlr1/dspfx/equalizer/band/1/quality_log10	
+/xlr1/dspfx/equalizer/band/2/type	
+/xlr1/dspfx/equalizer/band/2/enabled	
+/xlr1/dspfx/equalizer/band/2/quality_log10	
+/xlr1/dspfx/equalizer/band/3/type	
+/xlr1/dspfx/equalizer/band/3/enabled	
+/xlr1/dspfx/equalizer/band/3/quality_log10	
+/xlr2/gain	XLR2 input gain in dB
+/xlr2/mute	XLR2 input mute
+/xlr2/vst_enabled	XLR2 input vst insert is enabled
+/xlr2/lowcut_enabled	XLR2 input lowcut is enabled
+/xlr2/phantom_enabled	XLR2 input phantom power is enabled
+/xlr2/expander_enabled	XLR2 input expander is enabled
+/xlr2/limiter_bypassed	XLR2 input limiter bypass
+/xlr2/equalizer_enabled	XLR2 input equalizer is enabled
+/xlr2/compressor_enabled	XLR2 input compressor is enabled
+/xlr2/bettermaker_enabled	XLR2 input bettermaker is enabled
+/xlr2/sample_recorder_enabled	XLR2 input sample recorder is enabled
+/xlr2/dspfx/expander/ratio	XLR2 input expander ratio
+/xlr2/dspfx/expander/attack_ms	XLR2 input expander attack time in ms
+/xlr2/dspfx/expander/release_ms	XLR2 input expander release time in ms
+/xlr2/dspfx/bettermaker/knob	XLR2 input bettermaker effect strength in percent
+/xlr2/dspfx/compressor/ratio	XLR2 input compressor ratio
+/xlr2/dspfx/compressor/attack_ms	XLR2 input compressor attack time in
+/xlr2/dspfx/compressor/release_ms	XLR2 input compressor release time in ms
+/xlr2/dspfx/equalizer/band/0/type	XLR2 input equalizer band type
+/xlr2/dspfx/equalizer/band/0/enabled	XLR2 input equalizer band enabled
+/xlr2/dspfx/equalizer/band/0/quality_log10	XLR2 input equalizer band log10 of the quality parameter (-1,0,-1) corresponds to (0.1,1,10)
+/xlr2/dspfx/equalizer/band/1/type	
+/xlr2/dspfx/equalizer/band/1/enabled	
+/xlr2/dspfx/equalizer/band/1/quality_log10	
+/xlr2/dspfx/equalizer/band/2/type	
+/xlr2/dspfx/equalizer/band/2/enabled	
+/xlr2/dspfx/equalizer/band/2/quality_log10	
+/xlr2/dspfx/equalizer/band/3/type	
+/xlr2/dspfx/equalizer/band/3/enabled	
+/xlr2/dspfx/equalizer/band/3/quality_log10	
+/line/gain	Line-in gain in dB
+/line/mute	Line-in mute
+/line/vst_enabled	Line-in vst insert enabled
+/line/limiter_bypassed	Line-in limiter bypass
+/usb/vst_enabled	USB Aux vst insert enabled
+/standalone_input	
+/output	
+/headphone1/volume	Headphone output volume in dB
+/headphone1/mute	Headphone output mute
+/headphone1/hiz_enabled	Headphone output high-impedance mode enable
+/headphone1/limiter_bypassed	Headphone limiter bypass
+/headphone2/volume	
+/headphone2/mute	
+/headphone2/hiz_enabled	
+/headphone2/limiter_bypassed	
+/line/volume	Output volume in dB
+/usb/limiter_bypassed	USB Aux Out limiter bypass
+/standalone_output	
+/level	
+/trigger	
+/event	Event to trigger.
+/duration	Duration in the multiples of 10ms
+/proddata	
+/passcode	Passcode for the production data.
+/prod	
+/mic_select/0	Input 0 ( XLR Mic 1 ) ADC signal select
+/mic_select/1	Input 1 ( XLR Mic 2 ) ADC signal select
+/mic_det_threshold/0	Microphone detection threshold for 0 ( XLR Mic 1 )
+/mic_det_threshold/1	Microphone detection threshold for 1 ( XLR Mic 2 )
+/mic_det_disabled	Disable microphone detection on both XLR1, XLR2
+/api/major	API version
+/api/minor	
+/hw/major	HW version, same as bcdDevice
+/hw/minor	
+/hw/patch	
+/fw/major	FW version, different from bcdDevice
+/fw/minor	
+/fw/patch	
+/fw/build	
+/fw/commit	
+/bl/major	BL version, different from bcdDevice in the bl mode
+/bl/minor	
+/bl/patch	
+/bl/build	
+/bl/commit	
+/serial	Serial number, same as iSerialNumber
+/note	FW build note
+/xlr1/limiter_mode	XLR1 input limiter mode
+/xlr2/limiter_mode	XLR2 input limiter mode
+/mixer/0/master_volume	Mixer master 0 ( Personal Mix ) volume
+/mixer/0/master_mute	Mixer master 0 ( Personal Mix ) mute
+/mixer/1/master_volume	Mixer master 1 ( Chat Mix ) volume
+/mixer/1/master_mute	Mixer master 1 ( Chat Mix ) mute
+/mixer/2/master_volume	Mixer master 2 ( Stream Mix ) volume
+/mixer/2/master_mute	Mixer master 2 ( Stream Mix ) mute
+/mixer/3/master_volume	Mixer master 3 ( Record Mix ) volume
+/mixer/3/master_mute	Mixer master 3 ( Record Mix ) mute
+/mixer/4/master_volume	Mixer master 4 ( Aux Mix ) volume
+/mixer/4/master_mute	Mixer master 4 ( Aux Mix ) mute
+/xlr1/gain_lock	XLR1 input gain_lock is enabled
+/xlr1/mic_detection_disabled	XLR1 input microphone detection is disabled
+/xlr2/gain_lock	XLR2 input gain_lock is enabled
+/xlr2/mic_detection_disabled	XLR2 input microphone detection is disabled
+/line/gain_lock	Line-in gain_lock is enabled
+/usb/mute	USB Aux In (aux host output/playback) mute
+/usb/gain_lock	USB Aux In (aux host output/playback) gain lock
+/usb/volume	USB Aux In (aux host output/playback) volume
+/xlr1_phantom_muted	XLR1 phantom on/off mute state
+/xlr2_phantom_muted	XLR2 phantom on/off mute state
+/standalone/input/usb/mute	Standalone mode settings: USB aux playback mute
+/standalone/input/usb/gain_lock	Standalone mode settings: USB aux playback gain lock
+/standalone/input/usb/vst_enabled	Standalone mode settings: USB aux playback vst insert enabled
+/standalone/input/usb/volume	Standalone mode settings: USB aux playback volume
+/standalone/output/usb/mute	Standalone mode settings: USB aux recording mute
+/standalone/output/usb/gain_lock	Standalone mode settings: USB aux recording gain lock
+/standalone/output/usb/limiter_bypassed	Standalone mode settings: USB aux recording limiter bypass
+/standalone/output/usb/volume	Standalone mode settings: USB aux recording volume
+/usbaux_sample_rate_hz	Current usb aux sample rate in Hz.
+/p48_short_mute_enabled	Use short mute period for phantom on/off.
+/mic_det_value	Current microphone detection signal
+/mixer/crossfade	Mixer input Mixer crossfade in %
+/mixer/mode	Mixer input Mixer crossfade mode
+/mixer_inputs/source_select	Mixer input source select:
+/hw_outputs/source_select	HW audio output source select: 0 - XLR pre 1 - XLR post 2 - XLR VST 3 - Monitor Mix, 4 - Playback
+/usb_outputs/source_select	USB audio output source select:
+/usb_outputs/limiter_bypassed	USB audio output limiter bypassed
+/ui_mic_meter/source_select	Signal for intput meter on local UI source select:
+/hw_input/level/0	HW audio input level in dB 0 ( left )
+/hw_input/level/1	HW audio input level in dB 1 ( right )
+/hw_output/level/0	HW audio output level in dB 0 ( left )
+/hw_output/level/1	HW audio output level in dB 1 ( right )
+/usb_host_recording/level/0	USB host recording level in dB 0 ( left )
+/usb_host_recording/level/1	USB host recording level in dB 1 ( right )
+/usb_host_playback/level/0	USB host playback level in dB 0 ( left )
+/usb_host_playback/level/1	USB host playback level in dB 1 ( right )
+/post_dsp/level/0	post dsp level in dB 0 ( left )
+/post_dsp/level/1	post dsp level in dB 1 ( right )
+/post_vst/level/0	post vst level in dB 0 ( left )
+/post_vst/level/1	post vst level in dB 1 ( right )
+/moninor_mix/level/0	monitor mixer level in dB 0 ( left )
+/moninor_mix/level/1	monitor mixer level in dB 1 ( right )
+/leds	
+/indicator_brightness_main	Indicator brightness
+/status_brightness	Status LEDS brithness
+/background_brightness	background brightness
+/mute_background	mute background color in WRGB HINT: colorpicker
+/gain_reduction_value_indicator	gain reduction indicator color in WRGB HINT: colorpicker
+/gain_value_indicator	mic gain indicator color in WRGB HINT: colorpicker
+/gain_meter_background	mic peak meter color in WRGB HINT: colorpicker
+/headphone_value_indicator	headphone level indicator color in WRGB HINT: colorpicker
+/headphone_meter_background	headphone peak meter color in WRGB HINT: colorpicker
+/mix_value_indicator	mix indicator color in WRGB HINT: colorpicker
+/mix_background	mix background color in WRGB HINT: colorpicker
+/bettermaker_value_indicator	bettermaker indicator color in WRGB HINT: colorpicker
+/autogain_process_background	autogain in progress color in WRGB HINT: colorpicker
+/autogain_success_background	autogain success color in WRGB HINT: colorpicker
+/autogain_failure_background	autogain infailure color in WRGB HINT: colorpicker
+/bettermaker_min	bettermaker min indicator color in WRGB HINT: colorpicker
+/bettermaker_max	bettermaker max indicator color in WRGB HINT: colorpicker
+/mute_background_brightness	mute background brightness
+/volume_select	Knob volume control select
+/mic_select	Mic signal selection
+/ui_select	UI state selection: default, all-dark, all-white, all-red, all-green, all-blue
+/mic_det_threshold	Microphone detection threshold for
+/indicator_brightness_bleed	Indicator bleed factor
+/xlr1/clipguard_enabled	XLR1 input clipguard is enabled
+/mic_clipping_counter	Number of ADC clipping events at the MIC input. Use hasChanged() to detect clipping.
+/gain	MIC input gain in dB
+/mute	MIC input mute
+/gain_lock	MIC input gain lock is enabled
+/vst_enabled	MIC input vst insert is enabled
+/limiter_mode	MIC input limiter mode
+/lowcut_enabled	MIC input lowcut is enabled
+/expander_enabled	MIC input expander is enabled
+/equalizer_enabled	MIC input equalizer is enabled
+/compressor_enabled	MIC input compressor is enabled
+/bettermaker_enabled	MIC input bettermaker is enabled
+/sample_recorder_enabled	MIC input sample recorder is enabled
+/structureborne_lowcut_enabled	MIC input structure-borne lowcut is enabled
+/dspfx/expander/ratio	MIC input expander ratio
+/dspfx/expander/attack_ms	MIC input expander attack time in ms
+/dspfx/expander/release_ms	MIC input expander release time in ms
+/dspfx/bettermaker/knob	MIC input bettermaker effect strength in percent
+/dspfx/compressor/ratio	MIC input compressor ratio
+/dspfx/compressor/attack_ms	MIC input compressor attack time in
+/dspfx/compressor/release_ms	MIC input compressor release time in ms
+/dspfx/equalizer/band/0/type	MIC input equalizer band type
+/dspfx/equalizer/band/0/enabled	MIC input equalizer band enabled
+/dspfx/equalizer/band/0/quality_log10	MIC input equalizer band log10 of the quality parameter (-1,0,-1) corresponds to (0.1,1,10)
+/dspfx/equalizer/band/1/type	
+/dspfx/equalizer/band/1/enabled	
+/dspfx/equalizer/band/1/quality_log10	
+/dspfx/equalizer/band/2/type	
+/dspfx/equalizer/band/2/enabled	
+/dspfx/equalizer/band/2/quality_log10	
+/dspfx/equalizer/band/3/type	
+/dspfx/equalizer/band/3/enabled	
+/dspfx/equalizer/band/3/quality_log10	
+/volume	
+/limiter_bypassed	
+/upside_down	Enable upside-down mode
+/structureborne_lowcut_cutoff_hz	Cutoff frequency of the structureborne lowcut in Hz
+/sample_recorder_select	Sample recorder insertion selection
+/jack_det_disabled	Disable HP jack detection
+/error/codec_shutdown	Headphone output short-circuit detected.
+/error/mic_mute_low_voltage	Microphone input is muted due to low VBUS voltage.
+/mic/gain	Microphone input gain in dB
+/mic/mute	Microphone input mute
+/mic/gain_lock	Microphone input gain_lock is enabled
+/mic/vst_enabled	Microphone input vst insert is enabled
+/mic/limiter_mode	Microphone input limiter mode
+/mic/lowcut_enabled	Microphone input lowcut is enabled
+/mic/phantom_enabled	Microphone input phantom power is enabled
+/mic/expander_enabled	Microphone input expander is enabled
+/mic/equalizer_enabled	Microphone input equalizer is enabled
+/mic/compressor_enabled	Microphone input compressor is enabled
+/mic/bettermaker_enabled	Microphone input bettermaker is enabled
+/mic/sample_recorder_enabled	Microphone input sample recorder is enabled
+/mic/dspfx/expander/ratio	Microphone input expander ratio
+/mic/dspfx/expander/attack_ms	Microphone input expander attack time in ms
+/mic/dspfx/expander/release_ms	Microphone input expander release time in ms
+/mic/dspfx/bettermaker/knob	Microphone input bettermaker effect strength in percent
+/mic/dspfx/compressor/ratio	Microphone input compressor ratio
+/mic/dspfx/compressor/attack_ms	Microphone input compressor attack time in
+/mic/dspfx/compressor/release_ms	Microphone input compressor release time in ms
+/mic/dspfx/equalizer/band/0/type	Microphone input equalizer band type
+/mic/dspfx/equalizer/band/0/enabled	Microphone input equalizer band enabled
+/mic/dspfx/equalizer/band/0/quality_log10	Microphone input equalizer band log10 of the quality parameter (-1,0,-1) corresponds to (0.1,1,10)
+/mic/dspfx/equalizer/band/1/type	
+/mic/dspfx/equalizer/band/1/enabled	
+/mic/dspfx/equalizer/band/1/quality_log10	
+/mic/dspfx/equalizer/band/2/type	
+/mic/dspfx/equalizer/band/2/enabled	
+/mic/dspfx/equalizer/band/2/quality_log10	
+/mic/dspfx/equalizer/band/3/type	
+/mic/dspfx/equalizer/band/3/enabled	
+/mic/dspfx/equalizer/band/3/quality_log10	Ducker 0 ( Mic ) attenuation in dB
+/brightness	Brightness
+/color	Color WRGB HINT: colorpicker
+/standalone_leds	Number of ADC clipping events at the microphone input. Use hasChanged() to detect clipping.
+/version/fw/major	
+/version/fw/minor	
+/version/fw/patch	
+/config	
+/input_gain	Microphone gain in dB
+/input_mute	Microphone mute
+/clipguard_enable	Clipguard enable
+/lowcut_enable	Low-cut filter enable
+/headphone_volume	Headphone output in dB
+/headphone_mute	
+/direct_monitor	Direct monitoring/playback mix in percent
+/all_leds_off	All LEDs are off
+/leds_flip	Reverse the direction of LEDs and knob to use when mic is used upside down (e.g., on a boom arm).
+/touch_pressed_ms	
+/touch_signal	
+/api_version/major	
+/api_version/minor	
+/vbus_voltage	VBUS voltage (for TESTING purposes).
+/mic_type	PCB type: Schubert=1, Strauss=2
+/hw_version_board	Board HW version= 1....20
+/touch_signal_thr/lower	Touch key: upper and lower threshold value
+/touch_signal_thr/upper	MIC Serial number, 12character ASCII string, also in the USB descriptors
+/p48_enable	XLR input +48V phantom enable
+/lowcut1_enabled	80Hz low-cut enable
+/lowcut2_enabled	120Hz low-cut enable
+/mute_color_rgb/red	Mute LED ring color
+/mute_color_rgb/green	
+/mute_color_rgb/blue	
+/microphone_color_rgb/red	Microphone LED ring color
+/microphone_color_rgb/green	
+/microphone_color_rgb/blue	
+/mix_color_rgb/red	Mix LED ring color
+/mix_color_rgb/green	
+/mix_color_rgb/blue	
+/headphone_color_rgb/red	Headphone LED ring color
+/headphone_color_rgb/green	
+/headphone_color_rgb/blue	
+/mute_enabled	Mute button is enabled
+/headphone_detected	
+/gr_value_db	Firmware version
+/gr_color/red	Clipguard gain reduction meter color
+/gr_color/green	
+/gr_color/blue	
+/gr_enabled	Clipguard gain reduction meter enabled
+/low_impedance_enabled	Low impedance headphone mode enabled
+/writeflash	[%Y-%m-%d %H:%M:%S.%e] [%^---%L---%$] [%t] %s:%# %!: %v

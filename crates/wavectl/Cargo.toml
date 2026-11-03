@@ -1,0 +1,11 @@
+[package]
+name = "wavectl"
+description = "Command-line control for the Elgato Wave:3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wave-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true

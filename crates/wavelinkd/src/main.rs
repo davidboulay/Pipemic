@@ -17,7 +17,7 @@ mod model;
 
 use anyhow::{bail, Context, Result};
 use control::{Job, Reply, Request};
-use links::{Graph, NodeMatch, Want};
+use links::{AppRule, Graph, NodeMatch, Want};
 use model::{check_db, Config};
 use pipewire as pw;
 use pw::loop_::Signal;
@@ -83,6 +83,21 @@ fn apply(cfg: &mut Config, req: Request) -> Result<Vec<usize>> {
     })
 }
 
+/// Run the loop until the server has processed everything sent so far.
+fn roundtrip(main_loop: &pw::main_loop::MainLoopRc, core: &pw::core::CoreRc) {
+    let Ok(pending) = core.sync(0) else { return };
+    let ml = main_loop.clone();
+    let _l = core
+        .add_listener_local()
+        .done(move |id, seq| {
+            if id == pw::core::PW_ID_CORE && seq == pending {
+                ml.quit();
+            }
+        })
+        .register();
+    main_loop.run();
+}
+
 fn main() -> Result<()> {
     pw::init();
     let cfg_path = model::config_path();
@@ -143,7 +158,15 @@ fn main() -> Result<()> {
         }
     }
     let bind: Vec<String> = cfg.mixes.iter().map(Config::mix_in_node_name).collect();
-    let graph = Rc::new(Graph::start(&core, wants, bind)?);
+    let rules: Vec<AppRule> = cfg
+        .rules
+        .iter()
+        .map(|r| {
+            let ch = &cfg.channels[cfg.channel_index(&r.channel).expect("validated")];
+            AppRule { sink: Config::sink_node_name(ch), apps: r.apps.clone() }
+        })
+        .collect();
+    let graph = Rc::new(Graph::start(&core, wants, bind, rules)?);
 
     for m in &cfg.mixes {
         eprintln!("wavelinkd: mix '{}' -> {}", m.label, Config::mix_out_node_name(m));
@@ -181,6 +204,8 @@ fn main() -> Result<()> {
     eprintln!("wavelinkd: control socket {}; running (Ctrl-C to stop)", sock.display());
     main_loop.run();
     eprintln!("wavelinkd: stopping");
+    graph.release_streams();
+    roundtrip(&main_loop, &core);
     let _ = std::fs::remove_file(&sock);
     drop(sinks);
     drop(signals);

@@ -58,6 +58,38 @@ pub struct Route {
     pub mute: bool,
 }
 
+/// Send app streams to a channel. A stream matches if any of its
+/// application.name, application.process.binary, node.name or
+/// pipewire.access.portal.app_id equals one of `apps` (case-insensitive,
+/// `*` wildcard). Applied once, when the stream appears.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Rule {
+    pub channel: String,
+    pub apps: Vec<String>,
+}
+
+/// Case-insensitive match with `*` as wildcard.
+pub fn glob(pattern: &str, text: &str) -> bool {
+    let (p, t) = (pattern.to_lowercase(), text.to_lowercase());
+    let parts: Vec<&str> = p.split('*').collect();
+    if parts.len() == 1 {
+        return p == t;
+    }
+    let mut rest = t.as_str();
+    for (i, part) in parts.iter().enumerate() {
+        if i == 0 {
+            let Some(r) = rest.strip_prefix(part) else { return false };
+            rest = r;
+        } else if i == parts.len() - 1 {
+            return rest.ends_with(part);
+        } else {
+            let Some(pos) = rest.find(part) else { return false };
+            rest = &rest[pos + part.len()..];
+        }
+    }
+    true
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     #[serde(rename = "channel")]
@@ -66,6 +98,8 @@ pub struct Config {
     pub mixes: Vec<Mix>,
     #[serde(default, rename = "route")]
     pub routes: Vec<Route>,
+    #[serde(default, rename = "rule")]
+    pub rules: Vec<Rule>,
 }
 
 fn ch(id: &str, label: &str, device: Option<&str>) -> Channel {
@@ -91,6 +125,10 @@ impl Default for Config {
             ],
             // Don't monitor your own mic; don't echo voice chat back to it.
             routes: vec![muted("personal", "mic"), muted("chat", "voicechat")],
+            rules: vec![
+                Rule { channel: "music".into(), apps: vec!["spotify".into()] },
+                Rule { channel: "browser".into(), apps: vec!["Google Chrome".into(), "chrome".into(), "google-chrome*".into()] },
+            ],
         }
     }
 }
@@ -158,6 +196,12 @@ impl Config {
         }
         for m in &self.mixes {
             check_db(m.volume)?;
+        }
+        for r in &self.rules {
+            let ci = self.channel_index(&r.channel)?;
+            if self.channels[ci].device.is_some() {
+                bail!("rule targets device channel {:?}; apps can only go to virtual channels", r.channel);
+            }
         }
         for r in &self.routes {
             self.channel_index(&r.channel)?;
@@ -316,12 +360,25 @@ mod tests {
     }
 
     #[test]
+    fn globbing() {
+        assert!(glob("spotify", "Spotify"));
+        assert!(glob("google-chrome*", "google-chrome-stable"));
+        assert!(glob("*chrome", "Google Chrome"));
+        assert!(glob("a*b*c", "aXXbYYc"));
+        assert!(!glob("chrome", "Chromium"));
+        assert!(!glob("google-chrome*", "chrome"));
+    }
+
+    #[test]
     fn validation() {
         let mut c = Config::default();
         c.routes.push(Route { mix: "nope".into(), channel: "mic".into(), volume: 0.0, mute: false });
         assert!(c.validate().is_err());
         let mut c = Config::default();
         c.channels[1].volume = 3.0;
+        assert!(c.validate().is_err());
+        let mut c = Config::default();
+        c.rules.push(Rule { channel: "mic".into(), apps: vec!["x".into()] });
         assert!(c.validate().is_err());
     }
 }

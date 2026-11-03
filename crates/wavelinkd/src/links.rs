@@ -2,7 +2,9 @@
 //! - creates the wanted port-to-port links whenever their ports exist
 //!   (re-creating them after e.g. a mic replug);
 //! - binds the mix input nodes so gains can be pushed at runtime;
-//! - removes feedback links (a mix playing into a Wave Link channel).
+//! - removes feedback links (a mix playing into a Wave Link channel);
+//! - routes app streams to channels via the `default` metadata
+//!   (`target.object`, same as pavucontrol), once per stream.
 
 use pipewire as pw;
 use pw::properties::properties;
@@ -41,9 +43,26 @@ struct Port {
     out: bool,
 }
 
+/// App-to-channel rule: sink node name + patterns (see model::Rule).
+pub struct AppRule {
+    pub sink: String,
+    pub apps: Vec<String>,
+}
+
+struct NodeInfo {
+    serial: Option<String>,
+    is_app_stream: bool,
+    /// application.name, application.process.binary, node.name, portal app id
+    keys: Vec<String>,
+}
+
 #[derive(Default)]
 struct State {
     nodes: HashMap<u32, String>,
+    info: HashMap<u32, NodeInfo>,
+    /// stream id -> sink node name we sent it to
+    moved: HashMap<u32, String>,
+    metadata: Option<pw::metadata::Metadata>,
     ports: HashMap<u32, Port>,
     /// (out port id, in port id) -> link proxy
     links: HashMap<(u32, u32), pw::link::Link>,
@@ -62,6 +81,32 @@ impl State {
         }
         None
     }
+
+    fn route_streams(&mut self, rules: &[AppRule]) {
+        let Some(md) = &self.metadata else { return };
+        let mut newly = Vec::new();
+        for (&id, info) in &self.info {
+            if !info.is_app_stream || self.moved.contains_key(&id) {
+                continue;
+            }
+            let Some(rule) =
+                rules.iter().find(|r| r.apps.iter().any(|p| info.keys.iter().any(|k| crate::model::glob(p, k))))
+            else {
+                continue;
+            };
+            let sink_serial = self
+                .nodes
+                .iter()
+                .find(|(_, n)| **n == rule.sink)
+                .and_then(|(sid, _)| self.info.get(sid))
+                .and_then(|i| i.serial.clone());
+            let Some(serial) = sink_serial else { continue };
+            md.set_property(id, "target.object", Some("Spa:Id"), Some(&serial));
+            eprintln!("wavelinkd: {} -> {}", info.keys.first().map_or("?", |s| s.as_str()), rule.sink);
+            newly.push((id, rule.sink.clone()));
+        }
+        self.moved.extend(newly);
+    }
 }
 
 pub struct Graph {
@@ -78,7 +123,12 @@ fn is_feedback(from: &str, to: &str) -> bool {
 
 impl Graph {
     /// `bind_nodes`: node names to bind for `set_controls`.
-    pub fn start(core: &pw::core::CoreRc, wants: Vec<Want>, bind_nodes: Vec<String>) -> anyhow::Result<Self> {
+    pub fn start(
+        core: &pw::core::CoreRc,
+        wants: Vec<Want>,
+        bind_nodes: Vec<String>,
+        rules: Vec<AppRule>,
+    ) -> anyhow::Result<Self> {
         let registry = Rc::new(core.get_registry_rc()?);
         let state = Rc::new(RefCell::new(State::default()));
         let wants = Rc::new(wants);
@@ -129,6 +179,19 @@ impl Graph {
                         let Some(name) = props.get("node.name") else { return };
                         let mut st = st_add.borrow_mut();
                         st.nodes.insert(g.id, name.to_owned());
+                        let keys = ["application.name", "application.process.binary", "node.name", "pipewire.access.portal.app_id"]
+                            .iter()
+                            .filter_map(|k| props.get(k).map(str::to_owned))
+                            .collect();
+                        st.info.insert(
+                            g.id,
+                            NodeInfo {
+                                serial: props.get("object.serial").map(str::to_owned),
+                                is_app_stream: props.get("media.class") == Some("Stream/Output/Audio")
+                                    && !name.starts_with("wavelink."),
+                                keys,
+                            },
+                        );
                         if bind_nodes.iter().any(|b| b == name) {
                             match reg.bind::<pw::node::Node, _>(g) {
                                 Ok(n) => {
@@ -146,6 +209,14 @@ impl Graph {
                         };
                         let Ok(node) = node.parse() else { return };
                         st_add.borrow_mut().ports.insert(g.id, Port { node, name: name.to_owned(), out: dir == "out" });
+                    }
+                    ObjectType::Metadata => {
+                        if props.get("metadata.name") == Some("default") {
+                            match reg.bind::<pw::metadata::Metadata, _>(g) {
+                                Ok(m) => st_add.borrow_mut().metadata = Some(m),
+                                Err(e) => eprintln!("wavelinkd: bind default metadata failed: {e}"),
+                            }
+                        }
                     }
                     ObjectType::Link => {
                         let ids = (props.get("link.output.node"), props.get("link.input.node"));
@@ -165,10 +236,13 @@ impl Graph {
                     _ => return,
                 }
                 reconcile();
+                st_add.borrow_mut().route_streams(&rules);
             })
             .global_remove(move |id| {
                 let mut st = st_rm.borrow_mut();
                 st.nodes.remove(&id);
+                st.info.remove(&id);
+                st.moved.remove(&id);
                 st.bound.retain(|_, (nid, _)| *nid != id);
                 if st.ports.remove(&id).is_some() {
                     st.links.retain(|&(o, i), _| o != id && i != id);
@@ -177,6 +251,17 @@ impl Graph {
             .register();
 
         Ok(Self { state, _listener: listener, _registry: registry })
+    }
+
+    /// Clear `target.object` on streams we moved, so they go back to the
+    /// user's default output when the daemon stops. Needs a roundtrip after.
+    pub fn release_streams(&self) {
+        let st = self.state.borrow();
+        if let Some(md) = &st.metadata {
+            for &id in st.moved.keys() {
+                md.set_property(id, "target.object", None, None);
+            }
+        }
     }
 
     /// Push filter-graph control values (`"mixL:Gain 1"` = 0.5, …) to a bound node.

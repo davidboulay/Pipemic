@@ -116,6 +116,24 @@ fn main() -> Result<()> {
     let context = pw::context::ContextRc::new(&main_loop, None).context("PipeWire context")?;
     let core = context.connect_rc(None).context("connecting to PipeWire")?;
 
+    // If PipeWire goes away (restart, crash), exit non-zero so systemd restarts us.
+    let lost = Rc::new(std::cell::Cell::new(false));
+    let _core_listener = {
+        let weak = main_loop.downgrade();
+        let lost = lost.clone();
+        core.add_listener_local()
+            .error(move |id, _seq, res, msg| {
+                if id == pw::core::PW_ID_CORE {
+                    eprintln!("wavelinkd: lost PipeWire connection ({res}: {msg})");
+                    lost.set(true);
+                    if let Some(l) = weak.upgrade() {
+                        l.quit();
+                    }
+                }
+            })
+            .register()
+    };
+
     // Channels: one virtual sink per app channel.
     let mut sinks = Vec::new();
     for ch in cfg.channels.iter().filter(|c| c.device.is_none()) {
@@ -203,10 +221,13 @@ fn main() -> Result<()> {
 
     eprintln!("wavelinkd: control socket {}; running (Ctrl-C to stop)", sock.display());
     main_loop.run();
+    let _ = std::fs::remove_file(&sock);
+    if lost.get() {
+        bail!("PipeWire connection lost");
+    }
     eprintln!("wavelinkd: stopping");
     graph.release_streams();
     roundtrip(&main_loop, &core);
-    let _ = std::fs::remove_file(&sock);
     drop(sinks);
     drop(signals);
     Ok(())

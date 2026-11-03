@@ -1,0 +1,14 @@
+[Unit]
+Description=Wave Link mixer daemon (PipeWire)
+Documentation=https://github.com/davidboulay/elgato-wave-link-linux
+After=pipewire.service wireplumber.service
+Wants=wireplumber.service
+Requires=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/wavelinkd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=pipewire.service

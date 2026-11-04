@@ -14,7 +14,16 @@ fn main() -> iced::Result {
         .title("Wave Link")
         .subscription(App::subscription)
         .theme(|_: &App| Theme::Dark)
-        .window_size((900.0, 560.0))
+        .window(iced::window::Settings {
+            size: iced::Size::new(900.0, 560.0),
+            // Wayland app_id / X11 WM_CLASS: matches wavelink.desktop so the
+            // taskbar shows the right icon and pins work.
+            platform_specific: iced::window::settings::PlatformSpecific {
+                application_id: "wavelink".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .run()
 }
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Wave Link
+GenericName=Audio Mixer
+Comment=Mixer for wavelinkd and the Elgato Wave:3
+Exec=wavelink
+Icon=wavelink
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=elgato;wave;mixer;microphone;stream;
+StartupWMClass=wavelink

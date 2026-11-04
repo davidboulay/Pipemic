@@ -1,3 +1,4 @@
+mod fw;
 mod mix;
 
 use anyhow::{bail, Context, Result};
@@ -50,6 +51,11 @@ PARAMS:
         #[command(subcommand)]
         action: Option<mix::MixCmd>,
     },
+    /// Firmware: catalog check, image download/validation, DFU mode test (no flashing yet)
+    Fw {
+        #[command(subcommand)]
+        action: fw::FwCmd,
+    },
     /// Hex-dump a raw message (GET_MEM, read-only); with --watch, print each change
     Dump {
         /// Message ID (0 config, 1 status, 10 version)
@@ -77,6 +83,9 @@ fn main() -> Result<()> {
     if let Cmd::Mix { action } = cli.cmd {
         return mix::run(action);
     }
+    if let Cmd::Fw { action } = cli.cmd {
+        return fw::run(action);
+    }
     let dev = Wave3::open().context(
         "opening Wave:3 (is it plugged in, and is udev/70-elgato-wave.rules installed?)",
     )?;
@@ -86,7 +95,7 @@ fn main() -> Result<()> {
         Cmd::Set { param, value, dry_run } => set(&dev, &param, &value, dry_run),
         Cmd::Watch { interval, status } => watch(&dev, interval, status),
         Cmd::Dump { id, watch, interval } => dump(&dev, id, watch, interval),
-        Cmd::Mix { .. } => unreachable!(),
+        Cmd::Mix { .. } | Cmd::Fw { .. } => unreachable!(),
     }
 }
 

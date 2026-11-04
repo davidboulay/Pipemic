@@ -68,6 +68,21 @@ The macOS app also has a parallel `LewittDeviceThesyconMacBackend::dfuReset(ente
 - `dfu-util` alone won't do it: it sends a standard DETACH, not 0xF2, and doesn't send 0xF4. A small Rust tool in `wave-proto` is simpler.
 - Safety: XMOS designs usually keep a factory image and write upgrades to a separate slot (there's a REVERTFACTORY 0xF1 request), which would make a failed flash recoverable. That's *inferred* and not verified for this device. Bootloader 0.3.7 is reported separately.
 
+## Tooling (`pipemicctl fw`)
+
+Code: `wave-proto::dfu` (image + mode switching) and `pipemicctl/src/fw.rs`. **There's no flash write yet**; that waits for a firmware newer than 1.2.2 to test against.
+
+| Command | Does |
+|---|---|
+| `fw status` | Mode (run / bootloader / absent), firmware and bootloader versions, DFU state |
+| `fw check` | Compares the installed firmware with Elgato's catalog |
+| `fw fetch [--version V] [-o F]` | Downloads and validates (suffix, CRC, 0fd9:0070 target, version match, pinned sha256 if known) |
+| `fw inspect FILE` | Validates a local image |
+| `fw dfu-test --yes` | 0xF2 → GETSTATUS → 0xF3, then checks the firmware version didn't change |
+| `fw leave` | Recovers a mic stuck at 0fd9:0071 |
+
+Unit tests: `WAVE3_DFU=path/to/1.2.2.dfu cargo test -p wave-proto` also checks the real image.
+
 ## DFU descriptor (observed on Linux, 2026-11-04, fw 1.22)
 
 `lsusb -v -d 0fd9:0070`, run-time mode. There are 5 interfaces; **interface 4** is DFU (class FE / subclass 01 / protocol 1, "Elgato Wave:3 DFU", no endpoints).

@@ -500,6 +500,8 @@ enum Message {
     CheckUpdates,
     UpdateNow,
     UpdateDone(UpdateState),
+    CheckFirmware,
+    FirmwareDone(Result<wave_catalog::Firmware, String>),
     ShowDevice(bool),
     DeviceTab(u8),
     Knob(&'static str),
@@ -534,6 +536,16 @@ struct App {
     show_device: bool,
     /// 0 = input & monitoring, 1 = device info
     device_tab: u8,
+    /// Mic firmware update check (Device info tab).
+    fw: FwCheck,
+}
+
+#[derive(Debug, Clone, Default)]
+enum FwCheck {
+    #[default]
+    Idle,
+    Checking,
+    Done(Result<wave_catalog::Firmware, String>),
 }
 
 async fn tokio_sleep(ms: u64) {
@@ -568,8 +580,12 @@ impl App {
             tasks.push(Task::perform(tokio_sleep(3000), |_| Message::Shoot));
         }
         let view = std::env::var("PIPEMIC_VIEW").unwrap_or_default();
+        if view == "device-info" {
+            tasks.push(Task::done(Message::CheckFirmware));
+        }
         let app = Self {
-            show_device: view == "device",
+            show_device: view == "device" || view == "device-info",
+            device_tab: (view == "device-info") as u8,
             show_settings: view == "settings",
             open: view.strip_prefix("picker:").map(String::from), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
         (app, Task::batch(tasks))
@@ -698,6 +714,11 @@ impl App {
                 return Task::perform(blocking(settings::update), Message::UpdateDone);
             }
             Message::UpdateDone(u) => self.update = Some(u),
+            Message::CheckFirmware => {
+                self.fw = FwCheck::Checking;
+                return Task::perform(blocking(wave_catalog::latest_wave3), Message::FirmwareDone);
+            }
+            Message::FirmwareDone(r) => self.fw = FwCheck::Done(r),
             Message::ShowDevice(on) => self.show_device = on,
             Message::DeviceTab(t) => self.device_tab = t,
             Message::Shoot => {
@@ -1233,6 +1254,7 @@ impl App {
                 info_row("Serial number", self.mic["serial"].as_str().unwrap_or("?").to_string()),
                 separator(),
                 info_row("Firmware", get("firmware")),
+                self.firmware_check(&get("firmware")),
                 separator(),
                 info_row("Hardware", get("hardware")),
                 separator(),
@@ -1240,12 +1262,38 @@ impl App {
                 separator(),
                 info_row("API", get("api")),
             ]),
-            text("Firmware updates aren't available on Linux yet. Update the firmware with Elgato Wave Link on a Mac or Windows PC.")
+            text("Installing firmware from Linux isn't supported yet. Update the firmware with Elgato Wave Link on a Mac or Windows PC.")
                 .size(11)
                 .color(DIM),
         ]
         .spacing(12)
         .into()
+    }
+
+    /// "Check for updates" button and result, under the Firmware row.
+    fn firmware_check<'a>(&self, installed: &str) -> Element<'a, Message> {
+        let checking = matches!(self.fw, FwCheck::Checking);
+        let known = installed != "?";
+        let status: Option<(String, Color)> = match &self.fw {
+            FwCheck::Idle => None,
+            FwCheck::Checking => Some(("Checking Elgato's catalog…".into(), DIM)),
+            FwCheck::Done(Err(e)) => Some((format!("Couldn't check: {e}"), MUTED)),
+            FwCheck::Done(Ok(f)) if !known => Some((format!("Latest firmware: {}.", f.version), DIM)),
+            FwCheck::Done(Ok(f)) if wave_catalog::is_newer(&f.version, installed) => {
+                Some((format!("Firmware {} is available.", f.version), ACCENT))
+            }
+            FwCheck::Done(Ok(f)) => Some((format!("Up to date ({} is the latest).", f.version), ON)),
+        };
+        let mut r = row![button(text("Check for updates").size(12))
+            .padding([5, 12])
+            .style(soft_button)
+            .on_press_maybe((!checking).then_some(Message::CheckFirmware))]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if let Some((msg, color)) = status {
+            r = r.push(text(msg).size(12).color(color));
+        }
+        r.into()
     }
 
     fn settings_view<'a>(&'a self) -> Element<'a, Message> {

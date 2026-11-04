@@ -6,6 +6,8 @@ An open-source alternative to Elgato Wave Link, built on PipeWire.</p>
 
 ---
 
+<p align="center"><img src="docs/screenshots/mixer.png" alt="Pipemic mixer: five input channels, the Wave:3 panel, and the Personal and Outgoing mixes"></p>
+
 Elgato's Wave Link app runs on Windows and macOS only. Pipemic brings the same
 workflow to Linux:
 
@@ -21,8 +23,19 @@ workflow to Linux:
   hand, and Other holds the apps you add yourself.
 - **Safe by default:** only your mic goes out until you send a channel
   out yourself. That way nothing leaks into a call or stream by surprise.
+- **Firmware update check:** Device info compares the mic's firmware with
+  Elgato's catalog. Installing an update still needs Wave Link on Mac or Windows.
 - **Live meters** for every channel and both mixes, a per-channel fader link,
   and an output picker for your headphones or speakers.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Mixer with the mic muted](docs/screenshots/mixer-muted.png) | ![Wave:3 input and monitoring settings](docs/screenshots/mic-settings.png) |
+| Mic muted: the channel, the mic art and the button all follow the mic. | Gain, low cut, Clipguard, headphone volume, monitor mix and the knob mode. |
+| ![Wave:3 device info](docs/screenshots/device-info.png) | |
+| Device info: firmware, hardware and bootloader versions. | |
 
 ## Supported hardware
 
@@ -72,7 +85,7 @@ your default output.
 ## Status
 
 Pipemic is young and works day to day on the author's machine. These aren't
-built yet: noise suppression, firmware updates, upside-down mode, and Stream
+built yet: noise suppression, installing firmware updates (checking works), upside-down mode, and Stream
 Deck integration.
 
 ## License

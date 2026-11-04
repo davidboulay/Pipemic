@@ -6,7 +6,7 @@ pub mod fixed;
 pub mod msg;
 
 pub use device::Wave3;
-pub use msg::{Config, Setting, Status, Version, VolumeSelect};
+pub use msg::{Config, SemVer, Setting, Status, Version, VolumeSelect};
 pub use rusb::Error as RusbError;
 
 #[derive(Debug, thiserror::Error)]

@@ -1,14 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/wave-proto", "crates/wavectl", "crates/wavelinkd", "crates/wavelink-ui"]
+members = ["crates/desktop-apps", "crates/wave-proto", "crates/pipemicctl", "crates/pipemicd", "crates/pipemic"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [workspace.dependencies]
 wave-proto = { path = "crates/wave-proto" }
+desktop-apps = { path = "crates/desktop-apps" }
 rusb = "0.9"
 thiserror = "2"
 anyhow = "1"

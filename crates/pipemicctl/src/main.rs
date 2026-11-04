@@ -44,7 +44,7 @@ PARAMS:
         #[arg(long)]
         dry_run: bool,
     },
-    /// Show or change the wavelinkd mixer (no args: show the matrix)
+    /// Show or change the pipemicd mixer (no args: show the matrix)
     #[command(after_help = mix::VALUE_HELP)]
     Mix {
         #[command(subcommand)]
@@ -176,7 +176,7 @@ fn parse_setting(param: &str, v: &str) -> Result<Setting> {
         "leds-off" => Setting::AllLedsOff(parse_bool(v)?),
         "leds-flip" => Setting::LedsFlip(parse_bool(v)?),
         "gain-lock" => Setting::GainLock(parse_bool(v)?),
-        _ => bail!("unknown param {param:?} (see `wavectl set --help`)"),
+        _ => bail!("unknown param {param:?} (see `pipemicctl set --help`)"),
     })
 }
 

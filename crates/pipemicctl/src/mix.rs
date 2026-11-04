@@ -1,4 +1,4 @@
-//! `wavectl mix …`: talk to wavelinkd over its control socket.
+//! `pipemicctl mix …`: talk to pipemicd over its control socket.
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -39,18 +39,18 @@ pub enum MixCmd {
 pub const VALUE_HELP: &str = "VALUE: a volume in dB (-60..0, e.g. -12), or mute / unmute";
 
 fn socket_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("wavelinkd.sock")
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("pipemicd.sock")
 }
 
 fn request(req: Value) -> Result<Value> {
     let path = socket_path();
-    let mut s = UnixStream::connect(&path).with_context(|| format!("connecting to wavelinkd at {} (is it running?)", path.display()))?;
+    let mut s = UnixStream::connect(&path).with_context(|| format!("connecting to pipemicd at {} (is it running?)", path.display()))?;
     s.write_all(format!("{req}\n").as_bytes())?;
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line)?;
-    let reply: Value = serde_json::from_str(&line).context("bad reply from wavelinkd")?;
+    let reply: Value = serde_json::from_str(&line).context("bad reply from pipemicd")?;
     if reply["ok"] != true {
-        bail!("wavelinkd: {}", reply["error"].as_str().unwrap_or("unknown error"));
+        bail!("pipemicd: {}", reply["error"].as_str().unwrap_or("unknown error"));
     }
     Ok(reply)
 }
@@ -80,7 +80,7 @@ fn mic_request(setting: &str, value: Option<&str>) -> Result<Value> {
         "mute" => json!({"cmd": "mic", "mute": true}),
         "unmute" => json!({"cmd": "mic", "mute": false}),
         "gain" => {
-            let v = value.context("usage: wavectl mix mic gain <0..40>")?;
+            let v = value.context("usage: pipemicctl mix mic gain <0..40>")?;
             let db: f32 = v.trim_end_matches("dB").trim().parse().with_context(|| format!("not a number: {v:?}"))?;
             json!({"cmd": "mic", "gain": db})
         }

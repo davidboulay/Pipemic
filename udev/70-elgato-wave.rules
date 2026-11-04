@@ -4,3 +4,5 @@
 #           sudo udevadm control --reload && sudo udevadm trigger -s usb
 # Then replug the mic.
 SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0070", MODE="0660", TAG+="uaccess"
+# Wave:3 in DFU/bootloader mode (after vendor request 0xF2): needed for firmware updates.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0071", MODE="0660", TAG+="uaccess"

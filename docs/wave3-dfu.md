@@ -84,9 +84,23 @@ Implications:
 - **No upload**, so the read-back check (old step 3) isn't possible. Any protocol check has to be enter-DFU then leave, without DNLOAD.
 - **wTransferSize 64**: send the image as 64-byte DNLOAD blocks.
 
+## Enter/leave DFU mode (observed on Linux, 2026-11-04)
+
+Nothing was written to flash. Requests went through rusb, with interface 4 claimed in run mode and interface 0 in DFU mode.
+
+- Run mode, GETSTATUS (0xA1/0x03) on itf 4 → `00 0a 00 00 00 00`: OK, poll 10 ms, state 0 = appIDLE. GETSTATE (0x05) **times out** in run mode, so use GETSTATUS.
+- `0x21 / 0xF2 / wValue 0 / wIndex 4` → Ok. The device re-enumerates within 1 s, with no host reset, as:
+  - **0fd9:0071 "USB Bootloader"**, bcdDevice **0.37**, serial `xxxxxxxxxxxxxx`, self-powered.
+  - 1 interface (0), FE/01/**protocol 2** (DFU mode). Alt 0 and alt 1 both exist, and alt 1 carries the functional descriptor (same values: 0x0D, 240 ms, 64 B, DFU 1.10).
+  - GETSTATUS on itf 0 → `00 0a 00 00 02 00`: OK, state 2 = dfuIDLE.
+  - The mic **does not** go back to run mode on its own (it stayed at 0071 for more than 15 s).
+  - It needs its own udev rule. 0071 has been added to `udev/70-elgato-wave.rules`. After installing it, the already-enumerated device needed `udevadm trigger --action=add <syspath>`; a plain `trigger -s usb` didn't apply it.
+- `0x21 / 0xF3 / wValue 0 / wIndex 0` (RESETFROMDFU) → libusb returns **Pipe** (the device resets before it ACKs, so this is expected), and the device comes straight back as 0fd9:0070 fw 1.22. snd-usb-audio and the PipeWire source recover with no replug. Treat a Pipe or NoDevice error on 0xF3 as success.
+- Side effect: after the round-trip, **Chrome's audio service still saw no audio devices at all**, not even speakers, even though PipeWire was healthy. Reloading the tab didn't help. Ending Chrome's "Utility: Audio Service" (Shift+Esc in Chrome) fixed it. An updater should warn about this, or say to restart the browser afterwards.
+
 ## Still open (needs the device on Linux)
 
 1. ~~DFU functional descriptor~~: done, see above.
-2. The DFU-mode VID:PID after 0xF2, and whether the device leaves DFU mode on its own after manifestation (or needs 0xF3 or a USB reset).
+2. ~~DFU-mode VID:PID / leaving DFU~~: done (0071, and 0xF3 works). Still unknown: whether the device leaves DFU mode on its own **after manifestation**.
 3. ~~DFU_UPLOAD read-back~~: not possible because bitCanUpload is 0. The only non-writing check is enter DFU (0xF2) → inspect → leave (0xF3 / reset).
 4. The meaning of the `DFU@` header.

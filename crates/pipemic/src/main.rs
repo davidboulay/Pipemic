@@ -951,8 +951,8 @@ impl App {
     }
 
     /// Every app (running first, then installed), filtered by the search
-    /// box. Tap one to put it in this channel; tap an app that a rule put
-    /// here to send it back to its automatic channel.
+    /// box. Tap one to put it in this channel; tap a checked one to take it
+    /// out (an automatic app then stays out until it's put back).
     fn app_picker<'a>(&'a self, cid: &str) -> Element<'a, Message> {
         let q = self.search.to_lowercase();
         let auto = self.is_auto(cid);
@@ -967,11 +967,13 @@ impl App {
                 continue;
             }
             let here = a["channel"] == cid;
+            // Taken out of this channel by hand: listed here, switched off.
+            let off = a["excluded_from"] == cid;
             // A manual channel (Other) only takes apps that aren't placed anywhere yet.
             if !auto && !here && a["channel"].is_string() {
                 continue;
             }
-            if !here && n_rest >= 120 {
+            if !here && !off && n_rest >= 120 {
                 continue;
             }
             let explicit = a["explicit"] == true;
@@ -984,13 +986,22 @@ impl App {
             let mut line = row![pic, text(name.clone()).size(13).width(Length::Fill).wrapping(iced::widget::text::Wrapping::None)]
                 .spacing(10)
                 .align_y(Alignment::Center);
-            if a["running"] == true {
+            if a["playing"] == true {
                 line = line.push(text("Playing").size(11).color(ON));
             }
-            if here {
-                line = line.push(if explicit { text("Remove").size(11).color(DIM) } else { text("Automatic").size(11).color(DIM) });
-                line = line.push(icon(icons::CHECK, 16.0, ON));
-            } else if let Some(c) = a["channel"].as_str() {
+            if here || off {
+                // In this channel: a switch, so taking an app out is obvious.
+                line = line.push(text(if explicit { "Added" } else { "Automatic" }).size(11).color(DIM));
+                let on = here;
+                let (n, c) = (name.clone(), cid.to_string());
+                line = line.push(toggler(on).size(18).style(switch_style).on_toggle(move |v| Message::Assign(n.clone(), v.then(|| c.clone()))));
+                let hint = if here { "Turn off to keep this app out of this channel" } else { "Turn on to put this app back in this channel" };
+                let row_el = container(line).width(Length::Fill).padding([7, 10]);
+                here_list = here_list.push(iced::widget::tooltip(row_el, tooltip_box(hint.into()), iced::widget::tooltip::Position::Top).gap(6));
+                n_here += 1;
+                continue;
+            }
+            if let Some(c) = a["channel"].as_str() {
                 let other = channel_color(c);
                 line = line.push(
                     container(text(self.channel_label(c)).size(11).color(other))
@@ -998,24 +1009,17 @@ impl App {
                         .style(move |_| container::Style { background: Some(Color { a: 0.14, ..other }.into()), border: border::rounded(8), ..Default::default() }),
                 );
             }
-            let b = button(line).width(Length::Fill).padding([7, 10]).style(flat_button(false, ON));
-            // Here by category/catch-all: nothing to undo; move it by picking it elsewhere.
-            let b = match (here, explicit) {
-                (true, false) => b,
-                (true, true) => b.on_press(Message::Assign(name, None)),
-                (false, _) => b.on_press(Message::Assign(name, Some(cid.to_string()))),
-            };
-            if here {
-                n_here += 1;
-                here_list = here_list.push(b);
-            } else {
-                n_rest += 1;
-                rest_list = rest_list.push(b);
-            }
+            let b = button(line).width(Length::Fill).padding([7, 10]).style(flat_button(false, ON)).on_press(Message::Assign(name, Some(cid.to_string())));
+            let b = iced::widget::tooltip(b, tooltip_box("Click to add to this channel".into()), iced::widget::tooltip::Position::Top).gap(6);
+            n_rest += 1;
+            rest_list = rest_list.push(b);
         }
         let mut list = column![].spacing(6);
         if n_here > 0 {
-            list = list.push(heading("IN THIS CHANNEL")).push(here_list).push(Space::new().height(6));
+            list = list
+                .push(heading("IN THIS CHANNEL"))
+                .push(text("Switch an app off to keep it out of this channel.").size(11).color(DIM))
+                .push(here_list).push(Space::new().height(6));
         }
         list = list.push(heading("ALL APPS")).push(rest_list);
         if n_here + n_rest == 0 {

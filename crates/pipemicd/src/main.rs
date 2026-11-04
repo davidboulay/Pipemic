@@ -66,28 +66,33 @@ fn app_list(cfg: &Config, graph: &Graph, installed: bool) -> serde_json::Value {
     let router = cfg.router();
     let mut out: Vec<serde_json::Value> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
-    let mut push = |name: &str, icon: Option<&str>, keys: &[String], cats: &[String], running: bool| {
+    let mut push = |name: &str, icon: Option<&str>, keys: &[String], cats: &[String], running: bool, playing: bool| {
         if seen.iter().any(|s| s == name) {
             return;
         }
         seen.push(name.to_owned());
         let (channel, explicit) = router.route(keys, cats).map_or((None, false), |(c, e)| (Some(c.to_owned()), e));
+        // The channel its category would pick, if it was taken out of it.
+        let off = if router.is_excluded(keys) && channel.is_none() { router.auto(cats) } else { None };
         out.push(serde_json::json!({"name": name, "icon": icon, "keys": keys, "channel": channel,
-            "explicit": explicit, "running": running}));
+            "explicit": explicit, "running": running, "playing": playing, "excluded_from": off}));
     };
     for a in graph.live_apps() {
-        push(&a.name, a.icon.as_deref(), &a.keys, &a.categories, true);
+        push(&a.name, a.icon.as_deref(), &a.keys, &a.categories, true, a.playing);
     }
     if installed {
         let mut all = graph.installed();
         all.sort_by_key(|e| e.name.to_lowercase());
         for e in all.into_iter().filter(|e| e.stem != "pipemic") {
-            push(&e.name, Some(&e.icon), &e.keys(), &e.categories, false);
+            push(&e.name, Some(&e.icon), &e.keys(), &e.categories, false, false);
         }
+    }
+    for p in &cfg.excluded {
+        push(p, None, std::slice::from_ref(p), &[], false, false);
     }
     for r in &cfg.rules {
         for p in &r.apps {
-            push(p, None, std::slice::from_ref(p), &[], false);
+            push(p, None, std::slice::from_ref(p), &[], false, false);
         }
     }
     serde_json::Value::Array(out)
@@ -120,7 +125,12 @@ fn apply(cfg: &mut Config, graph: &Graph, req: Request) -> Result<Outcome> {
         Request::Levels | Request::Mic(_) => unreachable!("handled on the control thread"),
         Request::Assign { app, channel } => {
             let (keys, cats) = app_identity(graph, &app);
+            let was = cfg.router().route(&keys, &cats).map(|(c, e)| (c.to_owned(), e));
             cfg.assign(&app, &keys, None)?;
+            // Removing an app its category put here: keep it out for good.
+            if channel.is_none() && matches!(&was, Some((_, false))) {
+                cfg.exclude(&app, &keys);
+            }
             // Only write a rule when the app wouldn't land there by itself.
             if let Some(c) = channel.as_deref() {
                 if cfg.router().auto(&cats) != Some(c) {
@@ -279,6 +289,7 @@ fn main() -> Result<()> {
         taps.push((meter::Kind::Mix, m.id.clone()));
     }
     let meter = meter::Meter::start(&core, taps).context("meter stream")?;
+    let app_meter = meter::Probe::start(&core, meter::APP_NODE_NAME, "Pipemic app activity", meter::APP_SLOTS).context("app meter stream")?;
     for (i, ch) in cfg.channels.iter().enumerate() {
         for (side, pos) in ["FL", "FR"].iter().enumerate() {
             let (out_node, out_ports) = match &ch.device {
@@ -305,7 +316,7 @@ fn main() -> Result<()> {
         .filter(|m| m.kind == model::MixKind::Monitor)
         .map(|m| (Config::mix_out_node_name(m), m.output.clone()))
         .collect();
-    let graph = Rc::new(Graph::start(&core, wants, bind, cfg.router(), pins, cfg.output_fallback)?);
+    let graph = Rc::new(Graph::start(&core, wants, bind, cfg.router(), pins, cfg.output_fallback, app_meter.peaks.clone())?);
 
     for m in &cfg.mixes {
         eprintln!("pipemicd: mix '{}' -> {}", m.label, Config::mix_out_node_name(m));
@@ -372,6 +383,7 @@ fn main() -> Result<()> {
     graph.release_streams();
     roundtrip(&main_loop, &core);
     drop(meter);
+    drop(app_meter);
     drop(sinks);
     drop(signals);
     Ok(())

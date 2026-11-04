@@ -121,6 +121,10 @@ pub struct Config {
     pub routes: Vec<Route>,
     #[serde(default, rename = "rule")]
     pub rules: Vec<Rule>,
+    /// Apps kept out of their automatic (category) channel; they play to
+    /// the default output unless a rule places them.
+    #[serde(default)]
+    pub excluded: Vec<String>,
 }
 
 fn ch(id: &str, label: &str, device: Option<&str>, categories: &[&str]) -> Channel {
@@ -141,6 +145,7 @@ fn ch(id: &str, label: &str, device: Option<&str>, categories: &[&str]) -> Chann
 #[derive(Clone, Default, Debug)]
 pub struct Router {
     rules: Vec<(String, Vec<String>)>,
+    excluded: Vec<String>,
     categories: Vec<(String, Vec<String>)>,
     fallback: Option<String>,
 }
@@ -151,7 +156,15 @@ impl Router {
         if let Some((c, _)) = self.rules.iter().find(|(_, ps)| ps.iter().any(|p| keys.iter().any(|k| glob(p, k)))) {
             return Some((c, true));
         }
+        if self.is_excluded(keys) {
+            return None;
+        }
         self.auto(categories).map(|c| (c, false))
+    }
+
+    /// Was the app taken out of its automatic channel?
+    pub fn is_excluded(&self, keys: &[String]) -> bool {
+        self.excluded.iter().any(|p| keys.iter().any(|k| glob(p, k)))
     }
 
     /// Where the app goes without rules: by category, else the catch-all.
@@ -197,6 +210,7 @@ impl Default for Config {
             ],
             // Categories place most apps; rules are for exceptions.
             rules: vec![],
+            excluded: vec![],
         }
     }
 }
@@ -325,6 +339,7 @@ impl Config {
         }
         Router {
             rules,
+            excluded: self.excluded.clone(),
             categories: virt().filter(|c| !c.categories.is_empty()).map(|c| (c.id.clone(), c.categories.clone())).collect(),
             fallback: virt().find(|c| c.fallback).map(|c| c.id.clone()),
         }
@@ -350,6 +365,7 @@ impl Config {
             r.apps.retain(|p| !all.iter().any(|k| glob(p, k)));
         }
         self.rules.retain(|r| !r.apps.is_empty());
+        self.excluded.retain(|p| !all.iter().any(|k| glob(p, k)));
         if let Some(c) = channel {
             match self.rules.iter_mut().find(|r| r.channel == c) {
                 Some(r) => r.apps.push(name.to_owned()),
@@ -357,6 +373,12 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Keep app `name` out of its automatic channel.
+    pub fn exclude(&mut self, name: &str, keys: &[String]) {
+        self.assign(name, keys, None).ok();
+        self.excluded.push(name.to_owned());
     }
 
     /// Linear gain for channel `ci` in mix `mi`.

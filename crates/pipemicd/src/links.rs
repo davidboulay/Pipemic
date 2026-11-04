@@ -66,6 +66,8 @@ pub struct LiveApp {
     pub keys: Vec<String>,
     pub icon: Option<String>,
     pub categories: Vec<String>,
+    /// Any of its streams is making sound.
+    pub playing: bool,
 }
 
 /// Name to show for a stream: application.name without the
@@ -103,9 +105,59 @@ struct State {
     pins: HashMap<String, Option<String>>,
     /// stream id -> sink serial we last set for its pin
     pinned: HashMap<u32, Option<String>>,
+    /// App-meter slot -> app stream node id linked into it.
+    slots: Vec<Option<u32>>,
+    app_peaks: Option<std::sync::Arc<Vec<std::sync::atomic::AtomicU32>>>,
 }
 
 impl State {
+    /// Link each app stream's first output port into a free app-meter slot.
+    fn probe_apps(&mut self, core: &pw::core::CoreRc) {
+        let Some(meter) = self.nodes.iter().find(|(_, n)| *n == crate::meter::APP_NODE_NAME).map(|(&id, _)| id) else { return };
+        if self.slots.is_empty() {
+            self.slots = vec![None; crate::meter::APP_SLOTS];
+        }
+        let apps: Vec<u32> = self
+            .info
+            .iter()
+            .filter(|(id, i)| i.is_app_stream && !self.slots.contains(&Some(**id)) && !i.keys.iter().any(|k| HIDDEN_APPS.contains(&k.as_str())))
+            .map(|(&id, _)| id)
+            .collect();
+        for node in apps {
+            let Some(slot) = self.slots.iter().position(Option::is_none) else { return };
+            let mut outs: Vec<(&u32, &Port)> = self.ports.iter().filter(|(_, p)| p.node == node && p.out && !p.name.starts_with("monitor")).collect();
+            outs.sort_by(|a, b| a.1.name.cmp(&b.1.name));
+            let Some((&oport, _)) = outs.first() else { continue };
+            let want = format!("input_AUX{slot}");
+            let Some((&iport, _)) = self.ports.iter().find(|(_, p)| p.node == meter && !p.out && p.name == want) else { return };
+            match core.create_object::<pw::link::Link>(
+                "link-factory",
+                &properties! {
+                    "link.output.node" => node.to_string(),
+                    "link.output.port" => oport.to_string(),
+                    "link.input.node" => meter.to_string(),
+                    "link.input.port" => iport.to_string(),
+                    "object.linger" => "false",
+                },
+            ) {
+                Ok(l) => {
+                    self.links.insert((oport, iport), l);
+                    self.slots[slot] = Some(node);
+                    if let Some(p) = &self.app_peaks {
+                        p[slot].store(0, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                Err(e) => eprintln!("pipemicd: app meter link failed: {e}"),
+            }
+        }
+    }
+
+    /// Is stream `node` making sound right now?
+    fn playing(&self, node: u32) -> bool {
+        let (Some(slot), Some(p)) = (self.slots.iter().position(|s| *s == Some(node)), &self.app_peaks) else { return false };
+        f32::from_bits(p[slot].load(std::sync::atomic::Ordering::Relaxed)) > crate::meter::PLAYING
+    }
+
     fn find_port(&self, node: &NodeMatch, names: &[String], out: bool) -> Option<(u32, u32)> {
         for want in names {
             for (&pid, p) in &self.ports {
@@ -184,7 +236,7 @@ pub struct Graph {
 /// Is a link from node `from` into node `to` a feedback loop we must cut?
 /// Any Pipemic mix output feeding a Pipemic node.
 fn is_feedback(from: &str, to: &str) -> bool {
-    from.starts_with("pipemic.mix.") && !from.ends_with(".in") && to.starts_with("pipemic.") && to != crate::meter::NODE_NAME
+    from.starts_with("pipemic.mix.") && !from.ends_with(".in") && to.starts_with("pipemic.") && to != crate::meter::NODE_NAME && to != crate::meter::APP_NODE_NAME
 }
 
 impl Graph {
@@ -196,6 +248,7 @@ impl Graph {
         router: Router,
         pins: HashMap<String, Option<String>>,
         output_fallback: bool,
+        app_peaks: std::sync::Arc<Vec<std::sync::atomic::AtomicU32>>,
     ) -> anyhow::Result<Self> {
         let registry = Rc::new(core.get_registry_rc()?);
         let state = Rc::new(RefCell::new(State {
@@ -204,6 +257,7 @@ impl Graph {
             output_fallback,
             desktops: desktop_apps::scan(),
             scanned: Some(std::time::Instant::now()),
+            app_peaks: Some(app_peaks),
             ..State::default()
         }));
         let wants = Rc::new(wants);
@@ -242,6 +296,7 @@ impl Graph {
             }
         };
 
+        let probe_core = core.clone();
         let st_add = state.clone();
         let st_rm = state.clone();
         let reg = registry.clone();
@@ -336,6 +391,7 @@ impl Graph {
                 }
                 reconcile();
                 let mut st = st_add.borrow_mut();
+                st.probe_apps(&probe_core);
                 st.route_streams();
                 st.apply_pins();
             })
@@ -345,6 +401,9 @@ impl Graph {
                 st.info.remove(&id);
                 st.moved.remove(&id);
                 st.pinned.remove(&id);
+                for s in st.slots.iter_mut().filter(|s| **s == Some(id)) {
+                    *s = None;
+                }
                 // A chosen output went away: fall back (see apply_pins).
                 st.apply_pins();
                 st.bound.retain(|_, (nid, _)| *nid != id);
@@ -372,8 +431,9 @@ impl Graph {
     pub fn live_apps(&self) -> Vec<LiveApp> {
         let st = self.state.borrow();
         let mut out: Vec<LiveApp> = Vec::new();
-        for info in st.info.values().filter(|i| i.is_app_stream) {
+        for (&id, info) in st.info.iter().filter(|(_, i)| i.is_app_stream) {
             let name = &info.keys[0];
+            let playing = st.playing(id);
             if info.keys.iter().any(|k| HIDDEN_APPS.contains(&k.as_str())) {
                 continue;
             }
@@ -385,12 +445,14 @@ impl Graph {
                         }
                     }
                     a.icon = a.icon.take().or_else(|| info.icon.clone());
+                    a.playing |= playing;
                 }
                 None => out.push(LiveApp {
                     name: name.clone(),
                     keys: info.keys.clone(),
                     icon: info.icon.clone(),
                     categories: info.categories.clone(),
+                    playing,
                 }),
             }
         }

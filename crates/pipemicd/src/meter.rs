@@ -57,28 +57,49 @@ pub fn in_port(i: usize, side: usize) -> String {
 
 pub struct Meter {
     pub levels: Levels,
-    _stream: pw::stream::StreamRc,
-    _listener: pw::stream::StreamListener<()>,
+    _probe: Probe,
 }
 
 impl Meter {
     pub fn start(core: &pw::core::CoreRc, taps: Vec<(Kind, String)>) -> anyhow::Result<Self> {
-        let n = 2 * taps.len();
-        if n > 64 {
-            anyhow::bail!("too many meter taps ({})", taps.len());
+        let probe = Probe::start(core, NODE_NAME, "Pipemic meters", 2 * taps.len())?;
+        let levels = Levels { taps: Arc::new(taps), peaks: probe.peaks.clone() };
+        Ok(Self { levels, _probe: probe })
+    }
+}
+
+/// Mono slots that app streams get linked into, to tell an app that
+/// plays sound from one that only holds a silent stream open.
+pub const APP_NODE_NAME: &str = "pipemic.appmeter";
+pub const APP_SLOTS: usize = 64;
+
+/// Above this peak (≈ -66 dBFS) an app counts as playing.
+pub const PLAYING: f32 = 0.0005;
+
+/// A capture stream with `n` AUX input ports, keeping a decaying peak per port.
+pub struct Probe {
+    pub peaks: Arc<Vec<AtomicU32>>,
+    _stream: pw::stream::StreamRc,
+    _listener: pw::stream::StreamListener<()>,
+}
+
+impl Probe {
+    pub fn start(core: &pw::core::CoreRc, name: &str, description: &str, n: usize) -> anyhow::Result<Self> {
+        if n == 0 || n > 64 {
+            anyhow::bail!("{name}: bad port count {n}");
         }
         let peaks: Arc<Vec<AtomicU32>> = Arc::new((0..n).map(|_| AtomicU32::new(0)).collect());
-        let levels = Levels { taps: Arc::new(taps), peaks: peaks.clone() };
+        let rt_peaks = peaks.clone();
 
         let stream = pw::stream::StreamRc::new(
             core.clone(),
-            NODE_NAME,
+            name,
             properties! {
                 *pw::keys::MEDIA_TYPE => "Audio",
                 *pw::keys::MEDIA_CATEGORY => "Capture",
                 *pw::keys::MEDIA_ROLE => "DSP",
-                *pw::keys::NODE_NAME => NODE_NAME,
-                *pw::keys::NODE_DESCRIPTION => "Pipemic meters",
+                *pw::keys::NODE_NAME => name,
+                *pw::keys::NODE_DESCRIPTION => description,
                 "node.autoconnect" => "false",
                 "stream.dont-remix" => "true",
                 "node.dont-reconnect" => "true",
@@ -101,7 +122,7 @@ impl Meter {
                         max[c] = v;
                     }
                 }
-                for (c, p) in peaks.iter().enumerate() {
+                for (c, p) in rt_peaks.iter().enumerate() {
                     let prev = f32::from_bits(p.load(Ordering::Relaxed));
                     p.store(max[c].max(prev * DECAY).to_bits(), Ordering::Relaxed);
                 }
@@ -131,6 +152,6 @@ impl Meter {
             pw::stream::StreamFlags::MAP_BUFFERS | pw::stream::StreamFlags::RT_PROCESS,
             &mut params,
         )?;
-        Ok(Self { levels, _stream: stream, _listener: listener })
+        Ok(Self { peaks, _stream: stream, _listener: listener })
     }
 }

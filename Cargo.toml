@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/desktop-apps", "crates/wave-proto", "crates/pipemicctl", "crates/pipemicd", "crates/pipemic"]
+members = ["crates/desktop-apps", "crates/wave-proto", "crates/wave-catalog", "crates/pipemicctl", "crates/pipemicd", "crates/pipemic"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +9,7 @@ license = "MIT"
 
 [workspace.dependencies]
 wave-proto = { path = "crates/wave-proto" }
+wave-catalog = { path = "crates/wave-catalog" }
 desktop-apps = { path = "crates/desktop-apps" }
 rusb = "0.9"
 thiserror = "2"

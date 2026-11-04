@@ -1,5 +1,5 @@
 # Elgato Wave:3 (0fd9:0070): let the logged-in seat user open the device so
-# wavectl / wavelinkd can claim the vendor interface (3) without root.
+# pipemicctl / pipemicd can claim the vendor interface (3) without root.
 # Install:  sudo install -m644 udev/70-elgato-wave.rules /etc/udev/rules.d/
 #           sudo udevadm control --reload && sudo udevadm trigger -s usb
 # Then replug the mic.

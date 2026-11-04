@@ -1,0 +1,17 @@
+[package]
+name = "pipemic"
+description = "Pipemic mixer window (iced) for pipemicd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pipemic"
+path = "src/main.rs"
+
+[dependencies]
+iced = { version = "0.14", features = ["tokio", "svg", "image", "canvas"] }
+serde_json = "1"
+desktop-apps.workspace = true
+tokio = { version = "1", features = ["rt", "time"] }
+png = "0.17"

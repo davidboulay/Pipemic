@@ -1,7 +1,7 @@
 //! Wave:3 hardware control: a background thread polls the mic's config
 //! (so pad taps show up live), applies requested changes, and reconnects
 //! after a replug. Interface 3 is only claimed per transfer (see wave-proto),
-//! so `wavectl get/set` keep working alongside the daemon.
+//! so `pipemicctl get/set` keep working alongside the daemon.
 
 use serde::Serialize;
 use std::sync::{mpsc, Arc, Mutex};
@@ -19,7 +19,62 @@ pub struct MicState {
     pub lowcut: bool,
     pub headphone_volume: f32,
     pub headphone_mute: bool,
+    /// Headphone mix, % mic (0 = all computer, 100 = all mic).
     pub monitor: f32,
+    /// What the front knob (and its LED ring) controls: "mic", "headphone", "mix".
+    pub knob: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub info: Option<MicInfo>,
+}
+
+/// Fixed device facts, read once on connect (msg 10).
+#[derive(Serialize, Clone, Default, Debug, PartialEq)]
+pub struct MicInfo {
+    pub model: String,
+    pub firmware: String,
+    pub bootloader: String,
+    pub hardware: String,
+    pub api: String,
+}
+
+impl MicInfo {
+    fn from(v: &wave_proto::Version) -> Self {
+        let short = |s: &wave_proto::SemVer| {
+            let mut t = format!("{}.{}.{} ({})", s.major, s.minor, s.patch, s.build);
+            if !s.commit.is_empty() {
+                t.push(' ');
+                t.push_str(&s.commit);
+            }
+            t
+        };
+        Self {
+            model: "Wave:3".into(),
+            firmware: short(&v.firmware),
+            bootloader: short(&v.bootloader),
+            hardware: v.hw_version_board.to_string(),
+            api: format!("{}.{}", v.api_major, v.api_minor),
+        }
+    }
+}
+
+pub fn knob_name(v: wave_proto::VolumeSelect) -> String {
+    use wave_proto::VolumeSelect as V;
+    match v {
+        V::Mic => "mic".into(),
+        V::Headphone => "headphone".into(),
+        V::Mix => "mix".into(),
+        V::Other(n) => format!("other-{n}"),
+    }
+}
+
+pub fn knob_from(name: &str) -> Option<wave_proto::VolumeSelect> {
+    use wave_proto::VolumeSelect as V;
+    match name {
+        "mic" => Some(V::Mic),
+        "headphone" => Some(V::Headphone),
+        "mix" => Some(V::Mix),
+        _ => None,
+    }
 }
 
 type Job = (Vec<Setting>, mpsc::Sender<Result<(), String>>);
@@ -64,13 +119,15 @@ fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
         if dev.is_none() && last_try.elapsed() >= RETRY {
             last_try = Instant::now();
             if let Ok(d) = Wave3::open() {
-                let serial = d.version().ok().map(|v| v.serial);
+                let version = d.version().ok();
+                let serial = version.as_ref().map(|v| v.serial.clone());
                 eprintln!(
-                    "wavelinkd: Wave:3 connected ({})",
+                    "pipemicd: Wave:3 connected ({})",
                     serial.as_deref().unwrap_or("?")
                 );
                 if let Ok(mut s) = state.lock() {
                     s.serial = serial;
+                    s.info = version.as_ref().map(MicInfo::from);
                 }
                 dev = Some(d);
             }
@@ -101,9 +158,12 @@ fn refresh(dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
     let Some(d) = dev.as_ref() else { return };
     match d.config() {
         Ok(c) => {
+            let (serial, info) = state.lock().map(|s| (s.serial.clone(), s.info.clone())).unwrap_or_default();
             let new = MicState {
                 connected: true,
-                serial: state.lock().ok().and_then(|s| s.serial.clone()),
+                serial,
+                info,
+                knob: knob_name(c.volume_select),
                 gain: c.input_gain,
                 mute: c.input_mute,
                 clipguard: c.clipguard,
@@ -115,7 +175,7 @@ fn refresh(dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
             if let Ok(mut s) = state.lock() {
                 if s.connected && s.mute != new.mute {
                     eprintln!(
-                        "wavelinkd: mic {}",
+                        "pipemicd: mic {}",
                         if new.mute { "muted" } else { "unmuted" }
                     );
                 }
@@ -123,7 +183,7 @@ fn refresh(dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
             }
         }
         Err(wave_proto::Error::Usb(rusb_err)) if is_gone(&rusb_err) => {
-            eprintln!("wavelinkd: Wave:3 disconnected");
+            eprintln!("pipemicd: Wave:3 disconnected");
             *dev = None;
             if let Ok(mut s) = state.lock() {
                 *s = MicState::default();

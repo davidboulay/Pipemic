@@ -1,4 +1,6 @@
-# Handoff: Wave Link → Rust/Linux (from the MacBook session, 2026-11-03)
+# Handoff: Pipemic (Wave Link alternative for Linux, Rust)
+
+> 2026-11-04: renamed to **Pipemic** (binaries `pipemic`, `pipemicd`, `pipemicctl`; crates under `crates/pipemic*`; PipeWire node names `pipemic.*`; config `~/.config/pipemic/`; repo `davidboulay/pipemic`). Older notes below still use the old names.
 
 Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 
@@ -34,7 +36,7 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Repo: github.com/davidboulay/elgato-wave-link-linux (private).
 - `wavelinkd` slice 2 (verified 2026-11-03):
   - Channels: virtual sinks `wavelink.channel.{system,music,browser,voicechat}` plus the Wave:3 mic (matched by node.name prefix).
-  - Mixes: one in-process filter-chain each (two builtin `mixer` nodes L/R, max 8 channels). Stream and Chat are `Audio/Source` (`wavelink.mix.stream`, `wavelink.mix.chat`). Personal is a playback stream that WirePlumber routes to the default output.
+  - Mixes: one in-process filter-chain each (two builtin `mixer` nodes L/R, max 8 channels). Outgoing is an `Audio/Source` (`wavelink.mix.stream`, shown as "Wave Link Outgoing"). (2026-11-04: Chat mix dropped at the user's request; two mixes only, "my side" and "the other side".) Personal is a playback stream that WirePlumber routes to the default output.
   - A registry-driven linker wires every channel into every mix and relinks when ports reappear.
   - Config: `$XDG_CONFIG_HOME/wavelink/mixer.toml` (written with defaults on first run, saved on every change). Volumes in dB (-60..0) at three levels: channel, mix master, and route (channel × mix), plus a mute at each level. Defaults: mic muted in Personal, voice chat muted in Chat.
   - Control: JSON lines on `$XDG_RUNTIME_DIR/wavelinkd.sock` (see `control.rs`). CLI: `wavectl mix`, `wavectl mix channel music -6`, `wavectl mix master stream mute`, `wavectl mix route stream music -20`.
@@ -49,5 +51,16 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Next, in the agreed order: (1) install `wavelink` + .desktop entry + icon; (2) design pass: vertical strips like Wave Link, live level meters; (3) mic noise suppression (RNNoise / DeepFilterNet) replacing Voice Focus; (4) Stream Deck / WebSocket API (needs Mac RE first).
 
 ## Still open on the Mac side
+- **Firmware update (needed for an "Update firmware" button).** Run one Wave:3 firmware update in Wave Link while capturing:
+  1. the URL Wave Link downloads the firmware (and its version list) from, plus the downloaded file itself;
+  2. the file format: is it a plain DFU image that `dfu-util` accepts, or wrapped or signed?
+  3. the USB traffic: how Wave Link switches the mic into update mode (a vendor message on interface 3, or a DFU_DETACH on interface 4), the DFU transfer and the reboot.
+  Interface 4 is a standard DFU interface (class FE/01); the bootloader is 0.3.7. The Linux app must fetch the firmware from Elgato at update time and never ship it.
+- **Upside-down mode.** Toggle it in Wave Link (Settings → General) while watching msg 0, and confirm it is byte 14 `leds_flip`. If it is, the Linux UI can offer it.
+- **Other Elgato mics (Wave:1, Wave Neo, Wave XLR, Wave:3 MK.2).** The parameter paths are in `docs/waveapi-all-param-paths.tsv`, but each model's USB IDs and message layout still need capturing before the app can control it. The app supports the Wave:3 only until then.
 - The WebSocket API on 127.0.0.1:1884 rejects plain handshakes (HTTP 400). The requirement is still to be decompiled with REA. This isn't needed until the daemon is built.
 - The LED bytes (13–15) haven't been confirmed.
+
+## Firmware update (2026-11-04, Mac)
+- Reverse-engineered the update flow statically: see `docs/wave3-dfu.md`. It's XMOS-style DFU on the DFU interface: 0xF2 into DFU mode, 0xF4 to select image 0, standard DNLOAD/GETSTATUS with the suffix stripped, then manifest. Image: `edge.elgato.com/.../wave_3_firmware_1_2_2.dfu`, the same version the device already runs.
+- Next on Linux: run `lsusb -v` to get the DFU descriptor, find the DFU-mode PID after 0xF2, and check whether it leaves DFU mode on its own. Don't attempt a download until those are known.

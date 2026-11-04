@@ -22,7 +22,7 @@ const TIMEOUT: Duration = Duration::from_millis(500);
 pub const SUPPORTED_API_MAJOR: u8 = 5;
 
 /// A Wave:3 handle. Interface 3 is claimed only for the duration of each
-/// operation, so several processes (wavelinkd, wavectl) can share the mic.
+/// operation, so several processes (pipemicd, pipemicctl) can share the mic.
 pub struct Wave3 {
     handle: DeviceHandle<GlobalContext>,
     iface: u8,

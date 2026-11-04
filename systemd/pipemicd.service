@@ -1,12 +1,12 @@
 [Unit]
-Description=Wave Link mixer daemon (PipeWire)
-Documentation=https://github.com/davidboulay/elgato-wave-link-linux
+Description=Pipemic mixer daemon (PipeWire)
+Documentation=https://github.com/davidboulay/pipemic
 After=pipewire.service wireplumber.service
 Wants=wireplumber.service
 Requires=pipewire.service
 
 [Service]
-ExecStart=%h/.local/bin/wavelinkd
+ExecStart=%h/.local/bin/pipemicd
 Restart=on-failure
 RestartSec=2
 

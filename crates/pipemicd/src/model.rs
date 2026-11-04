@@ -2,7 +2,7 @@
 //! per crosspoint (route). Mirrors `channels` / `mixes` / `channelToMix` in
 //! Wave Link 3's `config.json` (see docs/wavelink3-architecture.md).
 //!
-//! Stored as TOML at `$XDG_CONFIG_HOME/wavelink/mixer.toml`. Volumes are dB,
+//! Stored as TOML at `$XDG_CONFIG_HOME/pipemic/mixer.toml`. Volumes are dB,
 //! -60 ..= 0 like Wave Link; -60 means silent.
 
 use anyhow::{bail, Context, Result};
@@ -18,13 +18,23 @@ pub struct Channel {
     pub id: String,
     pub label: String,
     /// Capture device, matched by node.name prefix. None = virtual sink
-    /// "Wave Link <label>" that apps play into.
+    /// "Pipemic <label>" that apps play into.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
     #[serde(default)]
     pub volume: f32,
     #[serde(default)]
     pub mute: bool,
+    /// UI: move this channel's mix faders together.
+    #[serde(default)]
+    pub link: bool,
+    /// Apps whose desktop entry has one of these Categories= land here
+    /// unless a rule says otherwise (e.g. "WebBrowser").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+    /// Catch-all: apps no rule or category claims play here.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fallback: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -45,6 +55,9 @@ pub struct Mix {
     pub volume: f32,
     #[serde(default)]
     pub mute: bool,
+    /// Monitor mixes: output device (node.name). None = the default output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 /// One crosspoint. Missing routes default to 0 dB, unmuted.
@@ -90,8 +103,16 @@ pub fn glob(pattern: &str, text: &str) -> bool {
     true
 }
 
+fn yes() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
+    /// When a monitor mix's chosen output is unplugged, play to the default
+    /// output until it's back.
+    #[serde(default = "yes")]
+    pub output_fallback: bool,
     #[serde(rename = "channel")]
     pub channels: Vec<Channel>,
     #[serde(rename = "mix")]
@@ -102,33 +123,80 @@ pub struct Config {
     pub rules: Vec<Rule>,
 }
 
-fn ch(id: &str, label: &str, device: Option<&str>) -> Channel {
-    Channel { id: id.into(), label: label.into(), device: device.map(Into::into), volume: 0.0, mute: false }
+fn ch(id: &str, label: &str, device: Option<&str>, categories: &[&str]) -> Channel {
+    Channel {
+        id: id.into(),
+        label: label.into(),
+        device: device.map(Into::into),
+        volume: 0.0,
+        mute: false,
+        link: false,
+        categories: categories.iter().map(|c| c.to_string()).collect(),
+        fallback: false,
+    }
+}
+
+/// Decides which channel an app's streams go to: an explicit rule, else
+/// the app's desktop category, else the catch-all channel.
+#[derive(Clone, Default, Debug)]
+pub struct Router {
+    rules: Vec<(String, Vec<String>)>,
+    categories: Vec<(String, Vec<String>)>,
+    fallback: Option<String>,
+}
+
+impl Router {
+    /// (channel id, set by an explicit rule?)
+    pub fn route(&self, keys: &[String], categories: &[String]) -> Option<(&str, bool)> {
+        if let Some((c, _)) = self.rules.iter().find(|(_, ps)| ps.iter().any(|p| keys.iter().any(|k| glob(p, k)))) {
+            return Some((c, true));
+        }
+        self.auto(categories).map(|c| (c, false))
+    }
+
+    /// Where the app goes without rules: by category, else the catch-all.
+    pub fn auto(&self, categories: &[String]) -> Option<&str> {
+        self.categories
+            .iter()
+            .find(|(_, cs)| cs.iter().any(|c| categories.contains(c)))
+            .map(|(c, _)| c.as_str())
+            .or(self.fallback.as_deref())
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mix = |id: &str, label: &str, kind| Mix { id: id.into(), label: label.into(), kind, volume: 0.0, mute: false };
+        let mix = |id: &str, label: &str, kind| Mix { id: id.into(), label: label.into(), kind, volume: 0.0, mute: false, output: None };
         let muted = |mix: &str, channel: &str| Route { mix: mix.into(), channel: channel.into(), volume: 0.0, mute: true };
         Self {
+            output_fallback: true,
             channels: vec![
-                ch("mic", "Microphone", Some("alsa_input.usb-Elgato_Systems_Elgato_Wave_3")),
-                ch("system", "System", None),
-                ch("music", "Music", None),
-                ch("browser", "Browser", None),
-                ch("voicechat", "Voice Chat", None),
+                ch("mic", "Microphone", Some("alsa_input.usb-Elgato_Systems_Elgato_Wave_3"), &[]),
+                ch("music", "Music", None, &["Music", "Audio"]),
+                ch("browser", "Browser", None, &["WebBrowser"]),
+                ch("voicechat", "Voice Chat", None, &["Chat", "InstantMessaging", "VideoConference", "Telephony"]),
+                // Manual only: holds the apps you add; nothing lands here by itself.
+                ch("other", "Other", None, &[]),
             ],
             mixes: vec![
-                mix("personal", "Personal Mix", MixKind::Monitor),
-                mix("stream", "Stream Mix", MixKind::Source),
-                mix("chat", "Chat Mix", MixKind::Source),
+                // What you hear.
+                mix("personal", "Personal", MixKind::Monitor),
+                // What the other side hears: pick "Pipemic Outgoing" as the
+                // mic in OBS / Discord / Zoom.
+                mix("stream", "Outgoing", MixKind::Source),
             ],
-            // Don't monitor your own mic; don't echo voice chat back to it.
-            routes: vec![muted("personal", "mic"), muted("chat", "voicechat")],
-            rules: vec![
-                Rule { channel: "music".into(), apps: vec!["spotify".into()] },
-                Rule { channel: "browser".into(), apps: vec!["Google Chrome".into(), "chrome".into(), "google-chrome*".into()] },
+            // Don't monitor your own mic. Only the mic goes out until you
+            // unmute a channel in Outgoing (no surprise leaks to a call or
+            // stream; voice chat staying muted also avoids echoing callers).
+            routes: vec![
+                muted("personal", "mic"),
+                muted("stream", "music"),
+                muted("stream", "browser"),
+                muted("stream", "voicechat"),
+                muted("stream", "other"),
             ],
+            // Categories place most apps; rules are for exceptions.
+            rules: vec![],
         }
     }
 }
@@ -138,7 +206,18 @@ pub fn config_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("wavelink").join("mixer.toml")
+    let path = base.join("pipemic").join("mixer.toml");
+    // Carry settings over from the app's earlier name.
+    let old = base.join("wavelink").join("mixer.toml");
+    if !path.exists() && old.exists() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::copy(&old, &path).is_ok() {
+            eprintln!("pipemicd: moved settings from {}", old.display());
+        }
+    }
+    path
 }
 
 fn db_to_lin(db: f32) -> f32 {
@@ -162,7 +241,7 @@ impl Config {
         if !path.exists() {
             let c = Self::default();
             c.save(path)?;
-            eprintln!("wavelinkd: wrote default config to {}", path.display());
+            eprintln!("pipemicd: wrote default config to {}", path.display());
             return Ok(c);
         }
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -197,6 +276,14 @@ impl Config {
         for m in &self.mixes {
             check_db(m.volume)?;
         }
+        if self.channels.iter().filter(|c| c.fallback).count() > 1 {
+            bail!("only one channel can be the catch-all (fallback = true)");
+        }
+        for c in self.channels.iter().filter(|c| c.device.is_some()) {
+            if c.fallback || !c.categories.is_empty() {
+                bail!("device channel {:?} can't take apps (fallback / categories)", c.id);
+            }
+        }
         for r in &self.rules {
             let ci = self.channel_index(&r.channel)?;
             if self.channels[ci].device.is_some() {
@@ -227,6 +314,51 @@ impl Config {
         self.routes.last_mut().unwrap()
     }
 
+    pub fn router(&self) -> Router {
+        let virt = || self.channels.iter().filter(|c| c.device.is_none());
+        let mut rules: Vec<(String, Vec<String>)> = Vec::new();
+        for r in &self.rules {
+            match rules.iter_mut().find(|(c, _)| *c == r.channel) {
+                Some((_, ps)) => ps.extend(r.apps.iter().cloned()),
+                None => rules.push((r.channel.clone(), r.apps.clone())),
+            }
+        }
+        Router {
+            rules,
+            categories: virt().filter(|c| !c.categories.is_empty()).map(|c| (c.id.clone(), c.categories.clone())).collect(),
+            fallback: virt().find(|c| c.fallback).map(|c| c.id.clone()),
+        }
+    }
+
+    /// Sink node of a channel id.
+    pub fn sink_for(id: &str) -> String {
+        format!("pipemic.channel.{id}")
+    }
+
+    /// Route app `name` (also known as `keys`) to `channel`, or to no channel
+    /// (the default output). Patterns from other rules that matched it go.
+    pub fn assign(&mut self, name: &str, keys: &[String], channel: Option<&str>) -> Result<()> {
+        if let Some(c) = channel {
+            let ci = self.channel_index(c)?;
+            if self.channels[ci].device.is_some() {
+                bail!("apps can only go to virtual channels, not {c:?}");
+            }
+        }
+        let mut all: Vec<String> = keys.to_vec();
+        all.push(name.to_owned());
+        for r in &mut self.rules {
+            r.apps.retain(|p| !all.iter().any(|k| glob(p, k)));
+        }
+        self.rules.retain(|r| !r.apps.is_empty());
+        if let Some(c) = channel {
+            match self.rules.iter_mut().find(|r| r.channel == c) {
+                Some(r) => r.apps.push(name.to_owned()),
+                None => self.rules.push(Rule { channel: c.to_owned(), apps: vec![name.to_owned()] }),
+            }
+        }
+        Ok(())
+    }
+
     /// Linear gain for channel `ci` in mix `mi`.
     pub fn gain(&self, mi: usize, ci: usize) -> f32 {
         let (m, c) = (&self.mixes[mi], &self.channels[ci]);
@@ -249,13 +381,13 @@ impl Config {
     }
 
     pub fn sink_node_name(c: &Channel) -> String {
-        format!("wavelink.channel.{}", c.id)
+        Self::sink_for(&c.id)
     }
     pub fn mix_in_node_name(m: &Mix) -> String {
-        format!("wavelink.mix.{}.in", m.id)
+        format!("pipemic.mix.{}.in", m.id)
     }
     pub fn mix_out_node_name(m: &Mix) -> String {
-        format!("wavelink.mix.{}", m.id)
+        format!("pipemic.mix.{}", m.id)
     }
     /// Capture port of a mix input for channel `i`, side 0 = L, 1 = R.
     pub fn mix_in_port(i: usize, side: usize) -> String {
@@ -277,8 +409,8 @@ impl Config {
         };
         format!(
             r#"{{
-  node.description = "Wave Link {label}"
-  media.name = "Wave Link {label}"
+  node.description = "Pipemic {label}"
+  media.name = "Pipemic {label}"
   filter.graph = {{
     nodes = [
       {{ name = mixL type = builtin label = mixer control = {{ {controls}}} }}
@@ -289,14 +421,14 @@ impl Config {
   }}
   capture.props = {{
     node.name = "{in_name}"
-    node.description = "Wave Link {label} (input)"
+    node.description = "Pipemic {label} (input)"
     audio.position = [ {positions}]
     node.autoconnect = false
     stream.dont-remix = true
   }}
   playback.props = {{
     node.name = "{out_name}"
-    node.description = "Wave Link {label}"
+    node.description = "Pipemic {label}"
     {class}
     audio.position = [ FL FR ]
   }}
@@ -319,15 +451,19 @@ mod tests {
         let (mic, music) = (c.channel_index("mic").unwrap(), c.channel_index("music").unwrap());
         assert_eq!(c.gain(p, mic), 0.0);
         assert_eq!(c.gain(s, mic), 1.0);
-        assert_eq!(c.gain(s, music), 1.0);
+        assert_eq!(c.gain(s, music), 0.0, "apps start muted in Outgoing");
+        assert_eq!(c.gain(p, music), 1.0);
+        assert_eq!(c.channels.last().unwrap().id, "other");
     }
 
     #[test]
     fn db_math() {
         let mut c = Config::default();
-        c.channels[2].volume = -6.0;
-        c.route_mut("stream", "music").volume = -14.0;
-        let g = c.gain(1, 2);
+        c.channels[1].volume = -6.0;
+        let r = c.route_mut("stream", "music");
+        r.volume = -14.0;
+        r.mute = false;
+        let g = c.gain(1, 1);
         assert!((g - 0.1).abs() < 1e-3, "{g}"); // -20 dB
         c.mixes[1].volume = -60.0;
         assert_eq!(c.gain(1, 2), 0.0);
@@ -343,7 +479,8 @@ mod tests {
         let back: Config = toml::from_str(&t).unwrap();
         back.validate().unwrap();
         assert_eq!(back.channels.len(), 5);
-        assert_eq!(back.routes.len(), 2);
+        assert_eq!(back.routes.len(), 5);
+        assert!(!back.channels.last().unwrap().fallback);
         assert!(t.contains("kind = \"monitor\""));
     }
 
@@ -370,6 +507,28 @@ mod tests {
     }
 
     #[test]
+    fn routing() {
+        let mut c = Config::default();
+        let k = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let r = c.router();
+        assert_eq!(r.route(&k(&["Spotify"]), &k(&["Audio", "Music"])), Some(("music", false)));
+        assert_eq!(r.route(&k(&["Google Chrome"]), &k(&["Network", "WebBrowser"])), Some(("browser", false)));
+        assert_eq!(r.route(&k(&["Slack"]), &k(&["Network", "InstantMessaging"])), Some(("voicechat", false)));
+        assert_eq!(r.route(&k(&["kded6"]), &[]), None, "unplaced apps stay out of the mixer");
+        let mut c2 = c.clone();
+        c2.assign("Betterbird", &k(&["Betterbird"]), Some("other")).unwrap();
+        assert_eq!(c2.router().route(&k(&["Betterbird"]), &k(&["Email"])), Some(("other", true)));
+        let chrome = k(&["Google Chrome", "chrome"]);
+        c.assign("Google Chrome", &chrome, Some("music")).unwrap();
+        assert_eq!(c.router().route(&chrome, &k(&["WebBrowser"])), Some(("music", true)));
+        c.assign("Google Chrome", &chrome, None).unwrap();
+        assert_eq!(c.router().route(&chrome, &k(&["WebBrowser"])), Some(("browser", false)));
+        assert_eq!(c.router().auto(&k(&["WebBrowser"])), Some("browser"));
+        assert!(c.assign("x", &[], Some("mic")).is_err());
+        c.validate().unwrap();
+    }
+
+    #[test]
     fn validation() {
         let mut c = Config::default();
         c.routes.push(Route { mix: "nope".into(), channel: "mic".into(), volume: 0.0, mute: false });
@@ -379,6 +538,10 @@ mod tests {
         assert!(c.validate().is_err());
         let mut c = Config::default();
         c.rules.push(Rule { channel: "mic".into(), apps: vec!["x".into()] });
+        assert!(c.validate().is_err());
+        let mut c = Config::default();
+        c.channels[1].fallback = true;
+        c.channels[2].fallback = true;
         assert!(c.validate().is_err());
     }
 }

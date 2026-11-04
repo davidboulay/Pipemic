@@ -1,5 +1,5 @@
 [package]
-name = "wavectl"
+name = "pipemicctl"
 description = "Command-line control for the Elgato Wave:3"
 version.workspace = true
 edition.workspace = true

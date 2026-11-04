@@ -33,7 +33,6 @@ pub const GEAR: &str = glyph!(r#"<circle cx="12" cy="12" r="3"/><path d="M19.4 1
 /// the mute slash across it, unlike a diagonal arrow.)
 pub const OUTGOING: &str = glyph!(r#"<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>"#);
 pub const PLUG: &str = glyph!(r#"<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/>"#);
-pub const CHECK: &str = glyph!(r#"<path d="M5 12l5 5 9-10"/>"#);
 
 pub fn glyph(src: &'static str) -> svg::Handle {
     svg::Handle::from_memory(src.as_bytes())

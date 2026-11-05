@@ -64,3 +64,9 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 ## Firmware update (2026-11-04, Mac)
 - Reverse-engineered the update flow statically: see `docs/wave3-dfu.md`. It's XMOS-style DFU on the DFU interface: 0xF2 into DFU mode, 0xF4 to select image 0, standard DNLOAD/GETSTATUS with the suffix stripped, then manifest. Image: `edge.elgato.com/.../wave_3_firmware_1_2_2.dfu`, the same version the device already runs.
 - Next on Linux: run `lsusb -v` to get the DFU descriptor, find the DFU-mode PID after 0xF2, and check whether it leaves DFU mode on its own. Don't attempt a download until those are known.
+
+## Mic mute sync (2026-11-05, Linux)
+- Bug: Meet said "Microphone muted by system". The Wave:3 PipeWire source was muted while the mic itself wasn't (no red LED); the daemon never synced the two. Earlier, the same mic delivered pure zeros after a replug (known quirk, fixed by a profile off/on).
+- Fix (`mic.rs`, `MuteSync`): every 1 s the daemon compares the hardware mute with the source's PipeWire mute (via `pactl`). On a new node or daemon start the hardware wins; if only the PipeWire side changed since the last sync (desktop mic-mute key), it's written to the mic so the LED follows.
+- Verified: daemon stopped, source muted in PipeWire, daemon started → unmuted within ~4 s. Desktop→mic direction is covered by unit tests only; not yet tried on the device.
+- Open: auto-detect the "zeros after replug" quirk and toggle the card profile.

@@ -99,14 +99,18 @@ pub enum UpdateState {
     Failed(String),
 }
 
-/// Blocking: fetch and count upstream commits not in this build.
+/// Releases come from the remote's default branch, whatever branch the
+/// source checkout happens to be on (it may be a feature branch).
+const RELEASE_REF: &str = "origin/main";
+
+/// Blocking: fetch and count release commits not in this build.
 pub fn check() -> UpdateState {
     let Some(dir) = source_dir() else { return UpdateState::Failed("source folder unknown: run packaging/install-user.sh once".into()) };
-    if let Err(e) = git(&dir, &["fetch", "--quiet"]) {
+    if let Err(e) = git(&dir, &["fetch", "--quiet", "origin"]) {
         return UpdateState::Failed(e);
     }
     let base = if BUILD_COMMIT.is_empty() { "HEAD" } else { BUILD_COMMIT };
-    match git(&dir, &["rev-list", "--count", &format!("{base}..@{{u}}")]) {
+    match git(&dir, &["rev-list", "--count", &format!("{base}..{RELEASE_REF}")]) {
         Ok(n) => match n.parse::<u32>() {
             Ok(0) => UpdateState::UpToDate,
             Ok(n) => UpdateState::Available(n),
@@ -119,7 +123,13 @@ pub fn check() -> UpdateState {
 /// Blocking: pull and reinstall (rebuilds, restarts the daemon).
 pub fn update() -> UpdateState {
     let Some(dir) = source_dir() else { return UpdateState::Failed("source folder unknown".into()) };
-    if let Err(e) = git(&dir, &["pull", "--ff-only", "--quiet"]) {
+    // Only update a checkout that's on main; never move someone's work branch.
+    match git(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+        Ok(b) if b == "main" => {}
+        Ok(b) => return UpdateState::Failed(format!("source folder is on branch '{b}', switch it to main to update")),
+        Err(e) => return UpdateState::Failed(e),
+    }
+    if let Err(e) = git(&dir, &["pull", "--ff-only", "--quiet", "origin", "main"]) {
         return UpdateState::Failed(e);
     }
     match Command::new(dir.join("packaging/install-user.sh")).output() {

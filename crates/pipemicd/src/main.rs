@@ -373,6 +373,13 @@ fn main() -> Result<()> {
         })
     };
 
+    // Re-create links PipeWire failed or dropped (see Graph::heal).
+    let heal_timer = {
+        let graph = graph.clone();
+        main_loop.loop_().add_timer(move |_| graph.heal())
+    };
+    heal_timer.update_timer(Some(std::time::Duration::from_secs(2)), Some(std::time::Duration::from_secs(2))).into_result()?;
+
     eprintln!("pipemicd: control socket {}; running (Ctrl-C to stop)", sock.display());
     main_loop.run();
     let _ = std::fs::remove_file(&sock);

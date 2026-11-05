@@ -95,6 +95,10 @@ struct State {
     ports: HashMap<u32, Port>,
     /// (out port id, in port id) -> link proxy
     links: HashMap<(u32, u32), pw::link::Link>,
+    /// When we asked for each wanted link; checked by `heal`.
+    asked: HashMap<(u32, u32), std::time::Instant>,
+    /// Link global id -> (out port, in port), every live link in the graph.
+    live: HashMap<u32, (u32, u32)>,
     /// node.name -> bound proxy, for nodes we push params to
     bound: HashMap<String, (u32, pw::node::Node)>,
     router: Router,
@@ -229,6 +233,7 @@ impl State {
 
 pub struct Graph {
     state: Rc<RefCell<State>>,
+    reconcile: Rc<dyn Fn()>,
     _listener: pw::registry::Listener,
     _registry: Rc<pw::registry::RegistryRc>,
 }
@@ -262,7 +267,7 @@ impl Graph {
         }));
         let wants = Rc::new(wants);
 
-        let reconcile = {
+        let reconcile: Rc<dyn Fn()> = Rc::new({
             let state = state.clone();
             let core = core.clone();
             move || {
@@ -289,12 +294,14 @@ impl Graph {
                     ) {
                         Ok(l) => {
                             st.links.insert((oport, iport), l);
+                            st.asked.insert((oport, iport), std::time::Instant::now());
                         }
                         Err(e) => eprintln!("pipemicd: link {} -> {}:{} failed: {e}", oport, w.in_node, w.in_port),
                     }
                 }
             }
-        };
+        });
+        let reconcile_global = reconcile.clone();
 
         let probe_core = core.clone();
         let st_add = state.clone();
@@ -378,6 +385,10 @@ impl Graph {
                         else {
                             return;
                         };
+                        let ports = (props.get("link.output.port"), props.get("link.input.port"));
+                        if let (Some(Ok(op)), Some(Ok(ip))) = (ports.0.map(str::parse::<u32>), ports.1.map(str::parse::<u32>)) {
+                            st_add.borrow_mut().live.insert(g.id, (op, ip));
+                        }
                         let st = st_add.borrow();
                         if let (Some(from), Some(to)) = (st.nodes.get(&o), st.nodes.get(&i)) {
                             if is_feedback(from, to) {
@@ -389,7 +400,7 @@ impl Graph {
                     }
                     _ => return,
                 }
-                reconcile();
+                reconcile_global();
                 let mut st = st_add.borrow_mut();
                 st.probe_apps(&probe_core);
                 st.route_streams();
@@ -397,6 +408,7 @@ impl Graph {
             })
             .global_remove(move |id| {
                 let mut st = st_rm.borrow_mut();
+                st.live.remove(&id);
                 st.nodes.remove(&id);
                 st.info.remove(&id);
                 st.moved.remove(&id);
@@ -409,11 +421,34 @@ impl Graph {
                 st.bound.retain(|_, (nid, _)| *nid != id);
                 if st.ports.remove(&id).is_some() {
                     st.links.retain(|&(o, i), _| o != id && i != id);
+                    st.asked.retain(|&(o, i), _| o != id && i != id);
                 }
             })
             .register();
 
-        Ok(Self { state, _listener: listener, _registry: registry })
+        Ok(Self { state, reconcile, _listener: listener, _registry: registry })
+    }
+
+    /// Re-create wanted links that never came up or were torn down behind
+    /// our back (e.g. PipeWire out of file descriptors during a mic replug).
+    /// Call every few seconds.
+    pub fn heal(&self) {
+        let dead = {
+            let mut st = self.state.borrow_mut();
+            let up: std::collections::HashSet<(u32, u32)> = st.live.values().copied().collect();
+            let grace = std::time::Duration::from_secs(3);
+            let dead: Vec<(u32, u32)> =
+                st.asked.iter().filter(|(k, t)| !up.contains(k) && t.elapsed() > grace).map(|(&k, _)| k).collect();
+            for k in &dead {
+                st.links.remove(k);
+                st.asked.remove(k);
+            }
+            dead.len()
+        };
+        if dead > 0 {
+            eprintln!("pipemicd: {dead} link(s) missing, re-creating");
+            (self.reconcile)();
+        }
     }
 
     /// Clear `target.object` on streams we moved, so they go back to the

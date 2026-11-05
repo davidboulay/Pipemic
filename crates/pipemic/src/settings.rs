@@ -67,7 +67,7 @@ pub fn set_autostart(on: bool) -> Result<(), String> {
     std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
     std::fs::write(
         &p,
-        "[Desktop Entry]\nType=Application\nName=Pipemic\nExec=pipemic\nIcon=pipemic\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=Pipemic\nExec=pipemic --background\nIcon=pipemic\nX-GNOME-Autostart-enabled=true\n",
     )
     .map_err(|e| e.to_string())
 }

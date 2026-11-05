@@ -6,13 +6,14 @@ cargo build --release
 bin="$HOME/.local/bin"; share="${XDG_DATA_HOME:-$HOME/.local/share}"
 install -Dm755 target/release/pipemicd target/release/pipemicctl target/release/pipemic -t "$bin"
 install -Dm644 packaging/pipemic.desktop -t "$share/applications"
-install -Dm644 packaging/pipemic.svg -t "$share/icons/hicolor/scalable/apps"
+install -Dm644 packaging/pipemic.svg packaging/pipemic-muted.svg -t "$share/icons/hicolor/scalable/apps"
 # PNGs for every standard size; small sizes use the simplified drawing.
 if command -v rsvg-convert >/dev/null; then
   for n in 16 22 24 32 48 64 128 256 512; do
     src=packaging/pipemic.svg; [ "$n" -le 32 ] && src=packaging/pipemic-small.svg
     mkdir -p "$share/icons/hicolor/${n}x${n}/apps"
     rsvg-convert -w "$n" -h "$n" "$src" -o "$share/icons/hicolor/${n}x${n}/apps/pipemic.png"
+    rsvg-convert -w "$n" -h "$n" packaging/pipemic-muted.svg -o "$share/icons/hicolor/${n}x${n}/apps/pipemic-muted.png"
   done
 fi
 mkdir -p "$share/pipemic" && pwd > "$share/pipemic/source"   # for the in-app update check

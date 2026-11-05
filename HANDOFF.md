@@ -70,3 +70,11 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Fix (`mic.rs`, `MuteSync`): every 1 s the daemon compares the hardware mute with the source's PipeWire mute (via `pactl`). On a new node or daemon start the hardware wins; if only the PipeWire side changed since the last sync (desktop mic-mute key), it's written to the mic so the LED follows.
 - Verified: daemon stopped, source muted in PipeWire, daemon started → unmuted within ~4 s. Desktop→mic direction is covered by unit tests only; not yet tried on the device.
 - Open: auto-detect the "zeros after replug" quirk and toggle the card profile.
+
+## Tray icon (2026-11-05, Linux)
+- `pipemic` is now an iced *daemon*: closing the window leaves it in the tray (ksni StatusNotifierItem, `crates/pipemic/src/tray.rs`). Tray: click = open, menu = Open / Mute mic / Quit. Icon `pipemic-muted` (red, slashed) while the Wave:3 is muted.
+- Single instance via `$XDG_RUNTIME_DIR/pipemic-ui.sock`: a second launch asks the running one to show its window and exits.
+- Autostart runs `pipemic --background` (tray only); old entries are rewritten on start.
+- No tray host (e.g. GNOME without the AppIndicator extension): closing the window quits, as before.
+- ksni's blocking API panics inside iced's tokio runtime, so the tray runs on its own thread and gets state over a channel.
+- Verified: tray registered with KDE, icon/tooltip follow mic state, second launch doesn't duplicate. Not yet tried by the user: close → tray → reopen.

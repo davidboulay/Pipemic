@@ -87,6 +87,9 @@ pub struct Mic {
 
 const POLL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(2);
+const MUTE_SYNC: Duration = Duration::from_secs(1);
+/// PipeWire node name prefix of the Wave:3 capture source.
+const SOURCE_PREFIX: &str = "alsa_input.usb-Elgato_Systems_Elgato_Wave_3";
 
 impl Mic {
     pub fn start() -> Self {
@@ -115,6 +118,8 @@ impl Mic {
 fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
     let mut dev: Option<Wave3> = None;
     let mut last_try = Instant::now() - RETRY;
+    let mut sync = MuteSync::default();
+    let mut last_sync = Instant::now() - MUTE_SYNC;
     loop {
         if dev.is_none() && last_try.elapsed() >= RETRY {
             last_try = Instant::now();
@@ -151,6 +156,131 @@ fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
         if let Some((r, reply)) = pending {
             let _ = reply.send(r);
         }
+        if last_sync.elapsed() >= MUTE_SYNC {
+            last_sync = Instant::now();
+            sync.tick(&mut dev, &state);
+        }
+    }
+}
+
+/// Keeps the PipeWire mute of the Wave:3 source equal to the mic's own mute
+/// (red LED). Apps like Meet treat a muted source as "muted by system", and
+/// WirePlumber can restore a stale mute when the node is recreated (replug,
+/// profile change), so this runs every second, not only on pad taps.
+#[derive(Default)]
+struct MuteSync {
+    /// Source node name and mute value at the last successful sync.
+    last: Option<(String, bool)>,
+}
+
+#[derive(Debug, PartialEq)]
+enum MuteAction {
+    None,
+    /// Hardware is the reference: copy its mute to PipeWire.
+    SetPipeWire(bool),
+    /// Only the PipeWire side changed since the last sync (e.g. the desktop's
+    /// mic-mute key): push it to the mic so the LED follows.
+    SetHardware(bool),
+}
+
+fn mute_action(last: Option<bool>, hw: bool, pw: bool) -> MuteAction {
+    if hw == pw {
+        MuteAction::None
+    } else if last == Some(hw) {
+        MuteAction::SetHardware(pw)
+    } else {
+        MuteAction::SetPipeWire(hw)
+    }
+}
+
+impl MuteSync {
+    fn tick(&mut self, dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
+        let hw = match state.lock() {
+            Ok(s) if s.connected => s.mute,
+            _ => {
+                self.last = None;
+                return;
+            }
+        };
+        let Some(name) = wave3_source() else {
+            self.last = None;
+            return;
+        };
+        let Some(pw) = source_mute(&name) else { return };
+        let last = self.last.as_ref().filter(|(n, _)| *n == name).map(|(_, m)| *m);
+        let result = match mute_action(last, hw, pw) {
+            MuteAction::None => Some(hw),
+            MuteAction::SetPipeWire(m) => {
+                eprintln!("pipemicd: PipeWire mute {} -> {} (follows Wave:3)", pw, m);
+                set_source_mute(&name, m).then_some(m)
+            }
+            MuteAction::SetHardware(m) => {
+                eprintln!("pipemicd: Wave:3 mute {} -> {} (follows PipeWire)", hw, m);
+                let ok = dev
+                    .as_ref()
+                    .is_some_and(|d| d.update(&[Setting::InputMute(m)]).is_ok());
+                if ok {
+                    if let Ok(mut s) = state.lock() {
+                        s.mute = m;
+                    }
+                }
+                ok.then_some(m)
+            }
+        };
+        self.last = result.map(|m| (name, m));
+    }
+}
+
+fn pactl(args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("pactl").args(args).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn wave3_source() -> Option<String> {
+    pactl(&["list", "sources", "short"])?
+        .lines()
+        .filter_map(|l| l.split('\t').nth(1))
+        .find(|n| n.starts_with(SOURCE_PREFIX) && !n.ends_with(".monitor"))
+        .map(str::to_string)
+}
+
+fn source_mute(name: &str) -> Option<bool> {
+    let out = pactl(&["get-source-mute", name])?;
+    // "Mute: yes" / "Mute: no" (localised builds still print yes/no).
+    let v = out.split(':').nth(1)?.trim();
+    Some(v == "yes")
+}
+
+fn set_source_mute(name: &str, mute: bool) -> bool {
+    pactl(&["set-source-mute", name, if mute { "1" } else { "0" }]).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hardware_wins_on_new_node() {
+        assert_eq!(mute_action(None, false, true), MuteAction::SetPipeWire(false));
+        assert_eq!(mute_action(None, true, false), MuteAction::SetPipeWire(true));
+    }
+
+    #[test]
+    fn pad_tap_goes_to_pipewire() {
+        // last sync: both unmuted; pad tapped -> hw muted
+        assert_eq!(mute_action(Some(false), true, false), MuteAction::SetPipeWire(true));
+    }
+
+    #[test]
+    fn desktop_mute_goes_to_mic() {
+        assert_eq!(mute_action(Some(false), false, true), MuteAction::SetHardware(true));
+        assert_eq!(mute_action(Some(true), true, false), MuteAction::SetHardware(false));
+    }
+
+    #[test]
+    fn in_sync_does_nothing() {
+        assert_eq!(mute_action(Some(true), true, true), MuteAction::None);
+        assert_eq!(mute_action(None, false, false), MuteAction::None);
     }
 }
 

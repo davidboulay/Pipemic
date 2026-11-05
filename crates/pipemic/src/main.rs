@@ -30,7 +30,11 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(|_: &App| theme())
         .window(iced::window::Settings {
-            size: iced::Size::new(1160.0, 780.0),
+            // Dev aid: PIPEMIC_SIZE=WxH opens at that size (for layout screenshots).
+            size: std::env::var("PIPEMIC_SIZE")
+                .ok()
+                .and_then(|v| v.split_once('x').and_then(|(w, h)| Some(iced::Size::new(w.parse().ok()?, h.parse().ok()?))))
+                .unwrap_or(iced::Size::new(1160.0, 780.0)),
             min_size: Some(iced::Size::new(640.0, 560.0)),
             // Wayland app_id / X11 WM_CLASS: matches pipemic.desktop so the
             // taskbar shows the right icon and pins work.
@@ -41,6 +45,29 @@ fn main() -> iced::Result {
             ..Default::default()
         })
         .run()
+}
+
+// ---- layout breakpoints (logical px) ----------------------------------------
+
+/// Strips narrower than this stack their header and use smaller toggles.
+const COMPACT_STRIP: f32 = 140.0;
+/// Below this content width the Device sidebar becomes a bar under the strips.
+const SIDEBAR_MIN: f32 = 980.0;
+/// Below this content width output rows drop the hint text and fixed widths.
+const COMPACT_OUTPUTS: f32 = 1060.0;
+
+/// Rough width of a label in the UI font (semibold), for choosing a layout
+/// before iced measures it. Errs on the wide side.
+fn est_text_width(s: &str, size: f32) -> f32 {
+    s.chars().count() as f32 * size * 0.62
+}
+
+/// Short form of a channel label for very narrow strips.
+fn short_label(s: &str) -> String {
+    match s {
+        "Microphone" => "Mic".into(),
+        _ => s.split_whitespace().next().unwrap_or(s).into(),
+    }
 }
 
 // ---- look ----------------------------------------------------------------
@@ -246,12 +273,16 @@ fn tooltip_box<'a>(hint: String) -> container::Container<'a, Message> {
 /// Mute toggle drawn as the mix's glyph, struck through and red when
 /// muted, with a hover hint saying what it does.
 fn mute_toggle<'a>(glyph: &'static str, muted: bool, hint: String, msg: Message) -> Element<'a, Message> {
+    mute_toggle_sized(glyph, muted, hint, msg, 22.0, 7)
+}
+
+fn mute_toggle_sized<'a>(glyph: &'static str, muted: bool, hint: String, msg: Message, size: f32, pad: u16) -> Element<'a, Message> {
     let c = if muted { MUTED } else { TEXT };
-    let mut layers = iced::widget::Stack::new().push(icon(glyph, 22.0, c));
+    let mut layers = iced::widget::Stack::new().push(icon(glyph, size, c));
     if muted {
-        layers = layers.push(icon(icons::SLASH, 22.0, c));
+        layers = layers.push(icon(icons::SLASH, size, c));
     }
-    let b = button(layers).padding(7).style(flat_button(muted, MUTED)).on_press(msg);
+    let b = button(layers).padding(pad).style(flat_button(muted, MUTED)).on_press(msg);
     iced::widget::tooltip(b, tooltip_box(hint), iced::widget::tooltip::Position::Top).gap(6).into()
 }
 
@@ -833,7 +864,14 @@ impl App {
         }
     }
 
-    fn strip<'a>(&'a self, c: &Value, mixes: &'a [Value]) -> Element<'a, Message> {
+    /// One channel strip. `width` is the strip's outer width; below
+    /// `COMPACT_STRIP` the header stacks and the controls tighten so nothing
+    /// spills into the next strip.
+    /// `label_w` is the widest label's estimated width, so every strip picks
+    /// the same header form.
+    fn strip<'a>(&'a self, c: &Value, mixes: &'a [Value], width: f32, label_w: f32) -> Element<'a, Message> {
+        let compact = width < COMPACT_STRIP;
+        let inner_w = width - 24.0;
         let cid = c["id"].as_str().unwrap_or("").to_string();
         let is_mic = c["device"].is_string();
         let label = c["label"].as_str().unwrap_or("?").to_string();
@@ -849,15 +887,35 @@ impl App {
                 border: border::rounded(9),
                 ..Default::default()
             });
-        let header = button(
+        // Pick the header form that fits: badge + label + chevron, then
+        // without the chevron, then badge above a (possibly shortened) label.
+        let avail = inner_w - 8.0 - 30.0 - 10.0;
+        let wide_w = label_w;
+        let header_body: Element<'a, Message> = if avail < wide_w {
+            let label = if est_text_width(&label, 12.0) > inner_w - 8.0 { short_label(&label) } else { label };
+            column![
+                badge,
+                container(text(label).size(12).font(SEMIBOLD).wrapping(iced::widget::text::Wrapping::None))
+                    .center_x(Length::Fill)
+                    .clip(true),
+            ]
+            .spacing(6)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
+            .into()
+        } else {
             row![
                 badge,
-                text(label).size(14).font(SEMIBOLD).width(Length::Fill).wrapping(iced::widget::text::Wrapping::None),
-                icon(icons::CHEVRON, 14.0, if open { TEXT } else { DIM }),
+                container(text(label).size(14).font(SEMIBOLD).wrapping(iced::widget::text::Wrapping::None))
+                    .width(Length::Fill)
+                    .clip(true),
             ]
+            .push((avail - 24.0 >= wide_w).then(|| icon(icons::CHEVRON, 14.0, if open { TEXT } else { DIM })))
             .spacing(10)
-            .align_y(Alignment::Center),
-        )
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let header = button(header_body)
         .padding([4, 4])
         .width(Length::Fill)
         .style(flat_button(false, TEXT))
@@ -866,14 +924,18 @@ impl App {
         // App box: who plays into this channel (or the mic itself).
         let inner: Element<'a, Message> = if is_mic {
             if self.mic["connected"] != true {
-                text("Wave:3 not connected").size(12).color(DIM).into()
+                text(if compact { "Not connected" } else { "Wave:3 not connected" }).size(11).color(DIM).center().into()
             } else if pad_muted {
                 row![icon(icons::MIC, 20.0, MUTED), text("Muted").size(12).font(SEMIBOLD).color(MUTED)]
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .into()
             } else {
-                row![icon(icons::MIC, 20.0, TEXT), text("Wave:3").size(12).color(DIM)].spacing(6).align_y(Alignment::Center).into()
+                let mut r = row![icon(icons::MIC, 20.0, TEXT)].spacing(6).align_y(Alignment::Center);
+                if inner_w >= 90.0 {
+                    r = r.push(text("Wave:3").size(12).color(DIM));
+                }
+                r.into()
             }
         } else {
             let apps = self.apps_in(&cid);
@@ -882,11 +944,20 @@ impl App {
                 ..Default::default()
             });
             if apps.is_empty() {
-                row![add, text("Add apps").size(12).color(DIM)].spacing(8).align_y(Alignment::Center).into()
+                let mut r = row![add].spacing(8).align_y(Alignment::Center);
+                if inner_w >= 110.0 {
+                    r = r.push(text("Add apps").size(12).color(DIM));
+                }
+                r.into()
             } else {
-                const SHOWN: usize = 4;
+                // Fit as many icons as the box allows (22 px + 7 gap each),
+                // keeping room for "+N" and, when wide enough, the add circle.
+                let show_add = !compact;
+                let room = inner_w - 16.0 - if show_add { 33.0 } else { 0.0 };
+                let fit = ((room + 7.0) / 29.0).floor().max(1.0) as usize;
+                let shown = if apps.len() > fit { fit.saturating_sub(1).max(1) } else { apps.len() };
                 let mut r = row![].spacing(7).align_y(Alignment::Center);
-                for a in apps.iter().take(SHOWN) {
+                for a in apps.iter().take(shown) {
                     let name = a["name"].as_str().unwrap_or("");
                     let el: Element<'a, Message> = match self.icon_of(a) {
                         Some(i) => app_icon(&i, 22.0),
@@ -895,16 +966,20 @@ impl App {
                     let tip = if a["running"] == true { format!("{name} (playing)") } else { name.to_string() };
                     r = r.push(iced::widget::tooltip(el, tooltip_box(tip), iced::widget::tooltip::Position::Top).gap(6));
                 }
-                if apps.len() > SHOWN {
-                    r = r.push(text(format!("+{}", apps.len() - SHOWN)).size(11).color(DIM));
+                if apps.len() > shown {
+                    r = r.push(text(format!("+{}", apps.len() - shown)).size(11).color(DIM));
                 }
-                r.push(add).into()
+                if show_add {
+                    r = r.push(add);
+                }
+                r.into()
             }
         };
         let app_box = mouse_area(panel(container(inner).center(Length::Fill), WELL, 10.0).width(Length::Fill).height(48)).on_press(tap);
 
         let _ = open;
-        let body = self.faders(&cid, mixes, color);
+        // Two mute toggles (26 px each in compact) plus the link button (21 px).
+        let body = self.faders(&cid, mixes, color, compact, !compact || inner_w >= 76.0);
 
         card(column![header, hmeter(self.peak("channel", &cid)), app_box, body].spacing(12).padding(12))
             .width(Length::Fill)
@@ -912,16 +987,17 @@ impl App {
             .into()
     }
 
-    fn faders<'a>(&'a self, cid: &str, mixes: &'a [Value], accent: Color) -> Element<'a, Message> {
-        let mut sliders = row![].spacing(30);
-        let mut toggles = row![].spacing(2).align_y(Alignment::Center);
+    fn faders<'a>(&'a self, cid: &str, mixes: &'a [Value], accent: Color, compact: bool, show_link: bool) -> Element<'a, Message> {
+        let mut sliders = row![].spacing(if compact { 8 } else { 30 });
+        let mut toggles = row![].spacing(if compact { 0 } else { 2 }).align_y(Alignment::Center);
+        let (glyph, pad) = if compact { (18.0, 4) } else { (22.0, 7) };
         for (i, m) in mixes.iter().enumerate() {
             let t = Target::Route { mix: m["id"].as_str().unwrap_or("").to_string(), channel: cid.to_string() };
             let (vol, mute) = self.level(&t);
             let tt = t.clone();
             sliders = sliders.push(
                 column![
-                    text(db_label(vol)).size(11).color(if mute { DIM } else { TEXT }),
+                    text(db_label(vol)).size(11).color(if mute { DIM } else { TEXT }).wrapping(iced::widget::text::Wrapping::None),
                     vertical_slider(-60.0..=0.0, vol, move |v| Message::Slide(tt.clone(), v))
                         .step(1.0_f32)
                         .on_release(Message::Release)
@@ -932,17 +1008,17 @@ impl App {
                 .spacing(10)
                 .align_x(Alignment::Center),
             );
-            if i == 1 {
+            if i == 1 && show_link {
                 let linked = self.linked(cid);
-                let b = button(icon(icons::LINK, 15.0, if linked { ON } else { DIM }))
-                    .padding(7)
+                let b = button(icon(icons::LINK, if compact { 13.0 } else { 15.0 }, if linked { ON } else { DIM }))
+                    .padding(pad)
                     .style(flat_button(linked, ON))
                     .on_press(Message::Link(cid.to_string(), !linked));
                 let hint = if linked { "Faders move together. Click to unlink." } else { "Click to move both faders together." };
                 toggles = toggles.push(iced::widget::tooltip(b, tooltip_box(hint.into()), iced::widget::tooltip::Position::Top).gap(6));
             }
             let hint = Self::mix_hint_for(self, cid, m, mute);
-            toggles = toggles.push(mute_toggle(Self::mix_glyph(m), mute, hint, Message::Mute(t, !mute)));
+            toggles = toggles.push(mute_toggle_sized(Self::mix_glyph(m), mute, hint, Message::Mute(t, !mute), glyph, pad));
         }
         column![container(sliders.height(Length::Fill)).center_x(Length::Fill), container(toggles).center_x(Length::Fill)]
             .spacing(10)
@@ -1136,6 +1212,58 @@ impl App {
                 ..Default::default()
             })
             .into()
+    }
+
+    /// Narrow-window version of the Device sidebar: one bar under the strips.
+    fn device_bar<'a>(&'a self) -> Element<'a, Message> {
+        let connected = self.mic["connected"] == true;
+        let muted = self.mic["mute"] == true;
+        let badge = container(icon(icons::MIC, 16.0, if muted { MUTED } else { TEXT })).center(34).style(|_| container::Style {
+            background: Some(RAIL.into()),
+            border: border::rounded(10),
+            ..Default::default()
+        });
+        let content: Element<'a, Message> = if connected {
+            row![
+                badge,
+                text("Wave:3").size(14).font(SEMIBOLD),
+                status_pill(muted),
+                Space::new().width(Length::Fill),
+                button(
+                    row![
+                        icon(icons::MIC, 15.0, if muted { Color::WHITE } else { TEXT }),
+                        text(if muted { "Unmute" } else { "Mute" }).size(13).font(SEMIBOLD)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([8, 16])
+                .style(move |t, st| mute_style(muted, t, st))
+                .on_press(Message::Mute(Target::MicGain, !muted)),
+                iced::widget::tooltip(
+                    button(icon(icons::GEAR, 16.0, TEXT)).padding(9).style(soft_button).on_press(Message::ShowDevice(true)),
+                    tooltip_box("Mic settings".into()),
+                    iced::widget::tooltip::Position::Top,
+                )
+                .gap(6),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            row![
+                container(icon(icons::PLUG, 16.0, DIM)).center(34),
+                column![
+                    text("Plug in your Wave:3").size(13).font(SEMIBOLD),
+                    text("This app is made for the Elgato Wave:3.").size(11).color(DIM),
+                ]
+                .spacing(2),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        card(container(content).padding([8, 14])).width(Length::Fill).into()
     }
 
     /// The Wave:3 sheet: drawing, mute and level on the left; input &
@@ -1357,7 +1485,7 @@ impl App {
         modal(sheet(body.padding(24)).width(500).into(), Message::ShowSettings(false))
     }
 
-    fn output_row<'a>(&'a self, m: &Value) -> Element<'a, Message> {
+    fn output_row<'a>(&'a self, m: &Value, compact: bool) -> Element<'a, Message> {
         let mid = m["id"].as_str().unwrap_or("").to_string();
         let label = m["label"].as_str().unwrap_or("?").to_string();
         let t = Target::Mix(mid.clone());
@@ -1375,6 +1503,8 @@ impl App {
                 .width(Length::Fill)
                 .style(picker_style)
                 .into()
+        } else if compact {
+            hmeter(self.peak("mix", &mid))
         } else {
             text("Pick “Pipemic Outgoing” as the mic in calls and streams").size(12).color(DIM).into()
         };
@@ -1382,13 +1512,21 @@ impl App {
         let vol_slider = slider(-60.0..=0.0, vol, move |v| Message::Slide(tt.clone(), v))
             .step(1.0_f32)
             .on_release(Message::Release)
-            .width(200)
+            .width(if compact { Length::FillPortion(3) } else { Length::Fixed(200.0) })
             .style(fader_style(ACCENT, mute));
         let title = column![
             text(label).size(14).font(SEMIBOLD),
             text(if monitor { "What you hear" } else { "What others hear" }).size(11).color(DIM),
         ]
         .spacing(2);
+        // In a narrow window the Outgoing hint moves into the title's tooltip.
+        let title: Element<'a, Message> = if compact && !monitor {
+            iced::widget::tooltip(title, tooltip_box("Pick “Pipemic Outgoing” as the mic in calls and streams".into()), iced::widget::tooltip::Position::Top)
+                .gap(6)
+                .into()
+        } else {
+            title.into()
+        };
 
         card(
             row![
@@ -1397,19 +1535,21 @@ impl App {
                     border: border::rounded(10),
                     ..Default::default()
                 }),
-                container(title).width(130),
+                container(title).width(if compact { 120 } else { 130 }),
                 container(device).width(Length::FillPortion(3)),
-                container(hmeter(self.peak("mix", &mid))).width(Length::FillPortion(2)),
+            ]
+            .push((!compact).then(|| container(hmeter(self.peak("mix", &mid))).width(Length::FillPortion(2))))
+            .extend([
                 mute_toggle(
                     icons::SPEAKER,
                     mute,
                     if mute { "Muted. Click to unmute.".into() } else { "Click to mute this output.".into() },
                     Message::Mute(t, !mute),
                 ),
-                vol_slider,
-                text(db_label(vol)).size(12).color(DIM).width(44),
-            ]
-            .spacing(16)
+                vol_slider.into(),
+                text(db_label(vol)).size(12).color(DIM).width(44).into(),
+            ])
+            .spacing(if compact { 12 } else { 16 })
             .align_y(Alignment::Center)
             .padding([10, 14]),
         )
@@ -1435,28 +1575,47 @@ impl App {
         let channels: &[Value] = self.config["channel"].as_array().map_or(&[], |v| v.as_slice());
         let mixes: &[Value] = self.config["mix"].as_array().map_or(&[], |v| v.as_slice());
 
-        let mut strips = row![].spacing(12).height(Length::Fill);
-        for c in channels {
-            strips = strips.push(self.strip(c, mixes));
-        }
-        let inputs = row![strips, self.device_panel()].spacing(12).height(Length::Fill);
         let gear = iced::widget::tooltip(
             button(icon(icons::GEAR, 18.0, DIM)).padding(7).style(flat_button(false, TEXT)).on_press(Message::ShowSettings(true)),
             tooltip_box("Preferences".into()),
             iced::widget::tooltip::Position::Left,
         );
 
-        let mut outputs = column![].spacing(10);
-        for m in mixes {
-            outputs = outputs.push(self.output_row(m));
-        }
+        // Lay out for the space we actually have: the Device sidebar folds
+        // into a bar and strips/outputs tighten as the window narrows.
+        let body = iced::widget::responsive(move |size| {
+            let w = size.width;
+            let sidebar = w >= SIDEBAR_MIN;
+            let n = channels.len().max(1) as f32;
+            let strips_w = if sidebar { w - 196.0 - 12.0 } else { w };
+            let strip_w = (strips_w - 12.0 * (n - 1.0)) / n;
+
+            let mut strips = row![].spacing(12).height(Length::Fill);
+            let label_w = channels
+                .iter()
+                .map(|c| est_text_width(c["label"].as_str().unwrap_or(""), 14.0))
+                .fold(0.0, f32::max);
+            for c in channels {
+                strips = strips.push(self.strip(c, mixes, strip_w, label_w));
+            }
+            let inputs: Element<'_, Message> = if sidebar {
+                row![strips, self.device_panel()].spacing(12).height(Length::Fill).into()
+            } else {
+                column![strips, self.device_bar()].spacing(12).height(Length::Fill).into()
+            };
+
+            let compact = w < COMPACT_OUTPUTS;
+            let mut outputs = column![].spacing(10);
+            for m in mixes {
+                outputs = outputs.push(self.output_row(m, compact));
+            }
+            column![inputs, heading("OUTPUTS"), outputs].spacing(12).into()
+        });
 
         let main = container(
             column![
                 row![heading("INPUTS"), Space::new().width(Length::Fill), status, gear].spacing(12).align_y(Alignment::Center),
-                inputs,
-                heading("OUTPUTS"),
-                outputs,
+                body,
             ]
             .spacing(12),
         )

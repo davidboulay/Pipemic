@@ -34,4 +34,11 @@ fi
 systemctl --user daemon-reload
 systemctl --user enable pipemicd.service >/dev/null 2>&1 || true
 systemctl --user restart pipemicd.service
+# A window left open would keep running the old build: restart it.
+if pgrep -x pipemic >/dev/null; then
+  pkill -x pipemic
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x pipemic >/dev/null || break; sleep 0.2; done
+  setsid -f "$bin/pipemic" >/dev/null 2>&1 < /dev/null
+  echo "restarted the open Pipemic window"
+fi
 echo "installed to $bin"

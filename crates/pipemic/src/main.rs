@@ -10,6 +10,7 @@
 mod icons;
 mod mic_art;
 mod settings;
+mod tray;
 
 use icons::{AppIcon, Icons};
 use iced::widget::{
@@ -25,11 +26,21 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 fn main() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+    // Already running (window closed, icon in the tray)? Show that one.
+    if !tray::claim_single_instance() {
+        return Ok(());
+    }
+    // A daemon, not a single-window app: closing the window leaves Pipemic
+    // in the tray; the tray (or launching it again) reopens the window.
+    iced::daemon(App::new, App::update, App::view)
         .title("Pipemic")
         .subscription(App::subscription)
-        .theme(|_: &App| theme())
-        .window(iced::window::Settings {
+        .theme(theme())
+        .run()
+}
+
+fn window_settings() -> iced::window::Settings {
+    iced::window::Settings {
             // Dev aid: PIPEMIC_SIZE=WxH opens at that size (for layout screenshots).
             size: std::env::var("PIPEMIC_SIZE")
                 .ok()
@@ -43,8 +54,7 @@ fn main() -> iced::Result {
                 ..Default::default()
             },
             ..Default::default()
-        })
-        .run()
+    }
 }
 
 // ---- layout breakpoints (logical px) ----------------------------------------
@@ -539,6 +549,8 @@ enum Message {
     /// Dev aid: PIPEMIC_SCREENSHOT=path saves the window as PNG ~3 s after start.
     Shoot,
     Shot(iced::window::Screenshot),
+    Tray(tray::Out),
+    WindowClosed(iced::window::Id),
 }
 
 #[derive(Default)]
@@ -569,6 +581,12 @@ struct App {
     device_tab: u8,
     /// Mic firmware update check (Device info tab).
     fw: FwCheck,
+    /// The mixer window, if open.
+    window: Option<iced::window::Id>,
+    /// Tray icon, once registered. Without one, closing the window quits.
+    tray: Option<tray::TrayHandle>,
+    /// What the tray shows (connected, muted), to update it only on change.
+    tray_state: Option<(bool, bool)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -619,6 +637,17 @@ impl App {
             device_tab: (view == "device-info") as u8,
             show_settings: view == "settings",
             open: view.strip_prefix("picker:").map(String::from), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
+        let mut app = app;
+        if app.autostart {
+            // Refresh older entries (Exec=pipemic) so login starts in the tray.
+            let _ = settings::set_autostart(true);
+        }
+        // `--background` (used by autostart) starts with just the tray icon.
+        if !std::env::args().any(|a| a == "--background") {
+            let (id, open) = iced::window::open(window_settings());
+            app.window = Some(id);
+            tasks.push(open.discard());
+        }
         (app, Task::batch(tasks))
     }
 
@@ -628,10 +657,44 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        let background = Subscription::batch([
+            Subscription::run(tray::run).map(Message::Tray),
+            iced::window::close_events().map(Message::WindowClosed),
+        ]);
+        if self.window.is_none() {
+            // Hidden: just keep the tray's mute state current.
+            return Subscription::batch([background, time::every(Duration::from_secs(1)).map(|_| Message::Tick)]);
+        }
         Subscription::batch([
+            background,
             time::every(Duration::from_millis(250)).map(|_| Message::Tick),
             time::every(Duration::from_secs(2)).map(|_| Message::AppsTick),
             time::every(Duration::from_millis(33)).map(|_| Message::MeterTick),
+        ])
+    }
+
+    /// Push mic state to the tray icon when it changes.
+    fn sync_tray(&mut self) {
+        let state = (self.mic["connected"] == true, self.mic["mute"] == true);
+        if let Some(t) = &self.tray {
+            if self.tray_state != Some(state) {
+                self.tray_state = Some(state);
+                t.set(state.0, state.1);
+            }
+        }
+    }
+
+    fn show_window(&mut self) -> Task<Message> {
+        if let Some(id) = self.window {
+            return iced::window::gain_focus(id);
+        }
+        let (id, open) = iced::window::open(window_settings());
+        self.window = Some(id);
+        // Fresh state on reopen so it's current straight away.
+        Task::batch([
+            open.discard(),
+            Task::perform(send(json!({"cmd": "status"})), Message::Status),
+            self.apps_request(),
         ])
     }
 
@@ -641,6 +704,7 @@ impl App {
         }
         if !v["mic"].is_null() {
             self.mic = v["mic"].clone();
+            self.sync_tray();
         }
         if let Some(a) = v["apps"].as_array() {
             self.apps = a.clone();
@@ -752,6 +816,28 @@ impl App {
             Message::FirmwareDone(r) => self.fw = FwCheck::Done(r),
             Message::ShowDevice(on) => self.show_device = on,
             Message::DeviceTab(t) => self.device_tab = t,
+            Message::Tray(tray::Out::Ready(h)) => {
+                self.tray = Some(h);
+                self.tray_state = None;
+                self.sync_tray();
+            }
+            Message::Tray(tray::Out::Event(e)) => match e {
+                tray::Event::Show => return self.show_window(),
+                tray::Event::ToggleMute => {
+                    let muted = self.mic["mute"] == true;
+                    return self.update(Message::Mute(Target::MicGain, !muted));
+                }
+                tray::Event::Quit => return iced::exit(),
+            },
+            Message::WindowClosed(id) => {
+                if self.window == Some(id) {
+                    self.window = None;
+                    self.dragging.clear();
+                    if self.tray.is_none() {
+                        return iced::exit(); // nowhere to come back from
+                    }
+                }
+            }
             Message::Shoot => {
                 return iced::window::latest().and_then(iced::window::screenshot).map(Message::Shot);
             }
@@ -1557,7 +1643,7 @@ impl App {
         .into()
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view(&self, _window: iced::window::Id) -> Element<'_, Message> {
         let status: Element<'_, Message> = match &self.error {
             Some(e) => row![
                 container(Space::new()).width(8).height(8).style(|_| container::Style {

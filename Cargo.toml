@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/desktop-apps", "crates/wave-proto", "crates/wave-catalog", "crates/pipemicctl", "crates/pipemicd", "crates/pipemic"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 

@@ -265,16 +265,30 @@ fn main() -> Result<()> {
             .with_context(|| format!("mix {}", cfg.mixes[mi].id))?;
     }
 
-    // Wiring: every channel into every mix (gain decides what's audible).
+    // Device channels (the mic) go through a loopback bridge: the device keeps
+    // its own clock and the bridge resamples into the mixes' graph. Linked
+    // directly, a USB mic follows the output's clock and XRUNs nonstop
+    // (Wave:3 behind a dock: ~47/s, heard as a robot voice; 2026-11-05).
     let mut wants = Vec::new();
+    for ch in &cfg.channels {
+        let Some(prefix) = &ch.device else { continue };
+        load_module(&context, "libpipewire-module-loopback", &Config::bridge_args(ch))
+            .with_context(|| format!("bridge for {}", ch.id))?;
+        wants.push(Want {
+            out_node: NodeMatch::Prefix(prefix.clone()),
+            out_ports: vec!["capture_MONO".to_owned(), "capture_FL".to_owned()],
+            in_node: format!("{}.in", Config::bridge_node_name(ch)),
+            in_port: "input_MONO".to_owned(),
+        });
+    }
+
+    // Wiring: every channel into every mix (gain decides what's audible).
     for m in &cfg.mixes {
         for (i, ch) in cfg.channels.iter().enumerate() {
             for (side, pos) in ["FL", "FR"].iter().enumerate() {
                 let (out_node, out_ports) = match &ch.device {
                     None => (NodeMatch::Exact(Config::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
-                    Some(prefix) => {
-                        (NodeMatch::Prefix(prefix.clone()), vec!["capture_MONO".to_owned(), format!("capture_{pos}")])
-                    }
+                    Some(_) => (NodeMatch::Exact(Config::bridge_node_name(ch)), vec!["output_MONO".to_owned()]),
                 };
                 wants.push(Want { out_node, out_ports, in_node: Config::mix_in_node_name(m), in_port: Config::mix_in_port(i, side) });
             }
@@ -294,7 +308,7 @@ fn main() -> Result<()> {
         for (side, pos) in ["FL", "FR"].iter().enumerate() {
             let (out_node, out_ports) = match &ch.device {
                 None => (NodeMatch::Exact(Config::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
-                Some(prefix) => (NodeMatch::Prefix(prefix.clone()), vec!["capture_MONO".to_owned(), format!("capture_{pos}")]),
+                Some(_) => (NodeMatch::Exact(Config::bridge_node_name(ch)), vec!["output_MONO".to_owned()]),
             };
             wants.push(Want { out_node, out_ports, in_node: meter::NODE_NAME.into(), in_port: meter::in_port(i, side) });
         }

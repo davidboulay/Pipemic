@@ -405,6 +405,21 @@ impl Config {
     pub fn sink_node_name(c: &Channel) -> String {
         Self::sink_for(&c.id)
     }
+    /// Clock bridge for a device channel: a loopback whose capture side runs
+    /// on the device's clock and whose playback side feeds the mixes.
+    pub fn bridge_node_name(c: &Channel) -> String {
+        format!("pipemic.dev.{}", c.id)
+    }
+    /// SPA-JSON args for libpipewire-module-loopback bridging device channel `c`.
+    pub fn bridge_args(c: &Channel) -> String {
+        let n = Self::bridge_node_name(c);
+        format!(
+            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ]
+  capture.props = {{ node.name = "{n}.in" node.autoconnect = false node.dont-reconnect = true }}
+  playback.props = {{ node.name = "{n}" node.autoconnect = false node.dont-reconnect = true }} }}"#,
+            label = c.label.replace('"', "")
+        )
+    }
     pub fn mix_in_node_name(m: &Mix) -> String {
         format!("pipemic.mix.{}.in", m.id)
     }

@@ -9,6 +9,8 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::eq::{Equalizer, BANDS, IDENTITY};
+
 pub const MIN_DB: f32 = -60.0;
 /// The built-in filter-graph mixer has 8 inputs.
 pub const MAX_CHANNELS: usize = 8;
@@ -35,6 +37,10 @@ pub struct Channel {
     /// Catch-all: apps no rule or category claims play here.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fallback: bool,
+    /// Equalizer on this channel (before the mixes), e.g. an imported
+    /// marketplace EQ preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eq: Option<Equalizer>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -137,6 +143,7 @@ fn ch(id: &str, label: &str, device: Option<&str>, categories: &[&str]) -> Chann
         link: false,
         categories: categories.iter().map(|c| c.to_string()).collect(),
         fallback: false,
+        eq: None,
     }
 }
 
@@ -286,6 +293,9 @@ impl Config {
         }
         for c in &self.channels {
             check_db(c.volume)?;
+            if let Some(eq) = &c.eq {
+                eq.validate().with_context(|| format!("equalizer of channel {:?}", c.id))?;
+            }
         }
         for m in &self.mixes {
             check_db(m.volume)?;
@@ -420,6 +430,103 @@ impl Config {
             label = c.label.replace('"', "")
         )
     }
+    /// Effects node of a channel: everything the channel sends to the mixes
+    /// and meters passes through it. Capture side `….in`, playback side bare.
+    pub fn fx_node_name(c: &Channel) -> String {
+        format!("pipemic.fx.{}", c.id)
+    }
+    pub fn fx_in_node_name(c: &Channel) -> String {
+        format!("{}.in", Self::fx_node_name(c))
+    }
+    /// Audio positions of a channel: device channels are mono.
+    pub fn sides(c: &Channel) -> &'static [&'static str] {
+        if c.device.is_some() {
+            &["MONO"]
+        } else {
+            &["FL", "FR"]
+        }
+    }
+    /// Filter-chain node holding band `b` (0-based) of side `s`.
+    fn eq_node(s: usize, b: usize) -> String {
+        format!("eq{}_{}", ["L", "R"][s], b + 1)
+    }
+
+    /// Controls for a channel's fx node: b0..a2 of every band and side.
+    pub fn fx_controls(c: &Channel) -> Vec<(String, f32)> {
+        let mut out = Vec::new();
+        for s in 0..Self::sides(c).len() {
+            for b in 0..BANDS {
+                let k = c.eq.as_ref().map_or(IDENTITY, |e| e.slot(b));
+                for (name, v) in ["b0", "b1", "b2", "a0", "a1", "a2"].iter().zip(k) {
+                    out.push((format!("{}:{name}", Self::eq_node(s, b)), v));
+                }
+            }
+        }
+        out
+    }
+
+    /// SPA-JSON args for the fx filter-chain of channel `c`: per side, a
+    /// series of `bq_raw` biquads (identity until an EQ sets them). Runs at
+    /// a fixed 48 kHz so the coefficients don't depend on the graph rate.
+    pub fn fx_args(c: &Channel) -> String {
+        let sides = Self::sides(c);
+        let ctl: std::collections::HashMap<String, f32> = Self::fx_controls(c).into_iter().collect();
+        let mut nodes = String::new();
+        let mut links = String::new();
+        for s in 0..sides.len() {
+            for b in 0..BANDS {
+                let n = Self::eq_node(s, b);
+                let k: String = ["b0", "b1", "b2", "a0", "a1", "a2"].iter().map(|p| format!("{p} = {} ", ctl[&format!("{n}:{p}")])).collect();
+                // bq_raw starts as an all-zero filter (silence) and only reads
+                // the controls when they change, so the starting coefficients
+                // must also go in `config` (PipeWire 1.6 plugin_builtin.c).
+                nodes.push_str(&format!(
+                    "      {{ name = {n} type = builtin label = bq_raw config = {{ coefficients = [ {{ rate = 48000 {k}}} ] }} control = {{ {k}}} }}\n"
+                ));
+                if b > 0 {
+                    links.push_str(&format!("      {{ output = \"{}:Out\" input = \"{n}:In\" }}\n", Self::eq_node(s, b - 1)));
+                }
+            }
+        }
+        let inputs: String = (0..sides.len()).map(|s| format!("\"{}:In\" ", Self::eq_node(s, 0))).collect();
+        let outputs: String = (0..sides.len()).map(|s| format!("\"{}:Out\" ", Self::eq_node(s, BANDS - 1))).collect();
+        let pos = sides.join(" ");
+        format!(
+            r#"{{
+  node.description = "Pipemic {label} (effects)"
+  media.name = "Pipemic {label} (effects)"
+  audio.rate = 48000
+  filter.graph = {{
+    nodes = [
+{nodes}    ]
+    links = [
+{links}    ]
+    inputs = [ {inputs}]
+    outputs = [ {outputs}]
+  }}
+  capture.props = {{
+    node.name = "{in_name}"
+    audio.position = [ {pos} ]
+    audio.rate = 48000
+    node.autoconnect = false
+    node.dont-reconnect = true
+    stream.dont-remix = true
+  }}
+  playback.props = {{
+    node.name = "{out_name}"
+    audio.position = [ {pos} ]
+    audio.rate = 48000
+    node.autoconnect = false
+    node.dont-reconnect = true
+    stream.dont-remix = true
+  }}
+}}"#,
+            label = c.label.replace('"', ""),
+            in_name = Self::fx_in_node_name(c),
+            out_name = Self::fx_node_name(c),
+        )
+    }
+
     pub fn mix_in_node_name(m: &Mix) -> String {
         format!("pipemic.mix.{}.in", m.id)
     }
@@ -531,6 +638,46 @@ mod tests {
         let p = c.filter_chain_args(0);
         assert!(p.contains("\"Gain 1\" = 0 "), "{p}");
         assert!(!p.contains("media.class"));
+    }
+
+    #[test]
+    fn fx_shape() {
+        let mut c = Config::default();
+        let mic = c.fx_args_for("mic");
+        assert!(mic.contains("audio.position = [ MONO ]"), "{mic}");
+        assert!(mic.contains("{ output = \"eqL_7:Out\" input = \"eqL_8:In\" }"));
+        assert!(mic.contains("inputs = [ \"eqL_1:In\" ]"));
+        assert!(!mic.contains("eqR_1"));
+        let music = c.fx_args_for("music");
+        assert!(music.contains("outputs = [ \"eqL_8:Out\" \"eqR_8:Out\" ]"));
+        assert!(
+            music.contains("label = bq_raw config = { coefficients = [ { rate = 48000 b0 = 1 b1 = 0 b2 = 0 a0 = 1 a1 = 0 a2 = 0 } ] } control = { b0 = 1 b1 = 0 b2 = 0 a0 = 1 a1 = 0 a2 = 0 }"),
+            "{music}"
+        );
+        assert_eq!(Config::fx_controls(&c.channels[1]).len(), 2 * BANDS * 6);
+        let eq = crate::eq::Equalizer {
+            name: "t".into(),
+            enabled: true,
+            bands: vec![crate::eq::Band { kind: crate::eq::Kind::Peak, freq: 1000.0, q: 1.0, gain: 6.0, on: true }],
+        };
+        c.channels[0].eq = Some(eq);
+        let ctl = Config::fx_controls(&c.channels[0]);
+        assert_eq!(ctl.len(), BANDS * 6);
+        assert_eq!(ctl[0].0, "eqL_1:b0");
+        assert!((ctl[0].1 - 1.04395).abs() < 1e-4);
+        assert_eq!(ctl[6].1, 1.0, "band 2 is identity");
+        c.channels[0].eq.as_mut().unwrap().enabled = false;
+        assert_eq!(Config::fx_controls(&c.channels[0])[0].1, 1.0);
+        c.validate().unwrap();
+        let t = toml::to_string_pretty(&c).unwrap();
+        let back: Config = toml::from_str(&t).unwrap();
+        assert_eq!(back.channels[0].eq, c.channels[0].eq);
+    }
+
+    impl Config {
+        fn fx_args_for(&self, id: &str) -> String {
+            Config::fx_args(&self.channels[self.channel_index(id).unwrap()])
+        }
     }
 
     #[test]

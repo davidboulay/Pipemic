@@ -27,6 +27,12 @@ pub enum MixCmd {
         #[arg(allow_hyphen_values = true)]
         value: Option<String>,
     },
+    /// Channel equalizer: import <preset.xml> (Elgato EQ preset add-on), on, off, clear
+    Eq {
+        channel: String,
+        action: String,
+        file: Option<PathBuf>,
+    },
     /// Set one channel's level inside one mix
     Route {
         mix: String,
@@ -102,6 +108,16 @@ pub fn run(cmd: Option<MixCmd>) -> Result<()> {
             let (volume, mute) = value_fields(&value)?;
             json!({"cmd": "mix", "mix": mix, "volume": volume, "mute": mute})
         }
+        Some(MixCmd::Eq { channel, action, file }) => match action.as_str() {
+            "import" => {
+                let f = file.context("usage: pipemicctl mix eq <channel> import <preset.xml>")?;
+                let f = std::fs::canonicalize(&f).with_context(|| format!("{}", f.display()))?;
+                json!({"cmd": "eq", "channel": channel, "import": f})
+            }
+            "on" | "off" => json!({"cmd": "eq", "channel": channel, "enabled": action == "on"}),
+            "clear" => json!({"cmd": "eq", "channel": channel, "clear": true}),
+            _ => bail!("eq action must be import, on, off or clear"),
+        },
         Some(MixCmd::Route { mix, channel, value }) => {
             let (volume, mute) = value_fields(&value)?;
             json!({"cmd": "route", "mix": mix, "channel": channel, "volume": volume, "mute": mute})
@@ -152,6 +168,15 @@ fn print_table(cfg: &Value) {
         print!(" {:>9}", level(m));
     }
     println!();
+    for c in chans.iter().filter(|c| c["eq"].is_object()) {
+        let eq = &c["eq"];
+        let state = if eq["enabled"] == false { "off" } else { "on" };
+        println!("eq {:<9} {} ({state})", c["id"].as_str().unwrap_or("?"), eq["name"].as_str().unwrap_or("?"));
+        for b in eq["band"].as_array().unwrap_or(&empty) {
+            let on = if b["on"] == false { " (off)" } else { "" };
+            println!("   {:<9} {:>8.1} Hz  Q {:<5} {:+.2} dB{on}", b["kind"].as_str().unwrap_or("?"), b["freq"].as_f64().unwrap_or(0.0), b["q"], b["gain"].as_f64().unwrap_or(0.0));
+        }
+    }
 }
 
 fn print_mic(m: &Value) {

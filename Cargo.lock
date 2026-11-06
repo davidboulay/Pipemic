@@ -1176,7 +1176,7 @@ dependencies = [
 
 [[package]]
 name = "desktop-apps"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "digest"
@@ -4117,7 +4117,7 @@ checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
 
 [[package]]
 name = "pipemic"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "desktop-apps",
  "iced",
@@ -4130,7 +4130,7 @@ dependencies = [
 
 [[package]]
 name = "pipemic-login"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "tao",
@@ -4139,7 +4139,7 @@ dependencies = [
 
 [[package]]
 name = "pipemicctl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4152,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "pipemicd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "desktop-apps",
@@ -6268,7 +6268,7 @@ dependencies = [
 
 [[package]]
 name = "wave-catalog"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "ureq",
@@ -6276,7 +6276,7 @@ dependencies = [
 
 [[package]]
 name = "wave-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rusb",
  "thiserror 2.0.21",

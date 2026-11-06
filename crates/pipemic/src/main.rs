@@ -76,6 +76,11 @@ fn window_settings() -> iced::window::Settings {
 
 /// Strips narrower than this stack their header and use smaller toggles.
 const COMPACT_STRIP: f32 = 140.0;
+/// Narrowest usable strip (effects chip, both dB readouts). Below it the
+/// strips keep this width and scroll sideways instead of squeezing.
+const MIN_STRIP: f32 = 132.0;
+/// Below this content width each output row splits over two lines.
+const TWO_LINE_OUTPUTS: f32 = 820.0;
 /// Below this content width the Device sidebar becomes a bar under the strips.
 const SIDEBAR_MIN: f32 = 980.0;
 /// Below this content width output rows drop the hint text and fixed widths.
@@ -1583,7 +1588,7 @@ impl App {
         let body = self.faders(&cid, mixes, color, compact, !compact || inner_w >= 76.0);
 
         card(column![header, hmeter(self.peak("channel", &cid)), app_box, self.fx_chip(c, compact), body].spacing(12).padding(12))
-            .width(Length::Fill)
+            .width(width)
             .height(Length::Fill)
             .into()
     }
@@ -2382,7 +2387,9 @@ impl App {
         modal(sheet(body.padding(24)).width(500).into(), Message::ShowSettings(false))
     }
 
-    fn output_row<'a>(&'a self, m: &Value, compact: bool) -> Element<'a, Message> {
+    /// One output (mix). `two_line`: a narrow window puts the title and
+    /// device on one line and the level controls on a second, full-width one.
+    fn output_row<'a>(&'a self, m: &Value, compact: bool, two_line: bool) -> Element<'a, Message> {
         let mid = m["id"].as_str().unwrap_or("").to_string();
         let label = m["label"].as_str().unwrap_or("?").to_string();
         let t = Target::Mix(mid.clone());
@@ -2424,6 +2431,37 @@ impl App {
         } else {
             title.into()
         };
+
+        let badge = container(icon(if monitor { icons::HEADPHONES } else { icons::OUTGOING }, 18.0, TEXT)).center(34).style(|_| container::Style {
+            background: Some(RAIL.into()),
+            border: border::rounded(10),
+            ..Default::default()
+        });
+        if two_line {
+            let tt = t.clone();
+            let top = row![badge, container(title).width(Length::Fill)]
+                .push(monitor.then(|| container(device).width(Length::Fixed(220.0))))
+                .spacing(12)
+                .align_y(Alignment::Center);
+            let bottom = row![
+                container(hmeter(self.peak("mix", &mid))).width(Length::FillPortion(2)),
+                mute_toggle(
+                    icons::SPEAKER,
+                    mute,
+                    if mute { "Muted. Click to unmute.".into() } else { "Click to mute this output.".into() },
+                    Message::Mute(t, !mute),
+                ),
+                slider(-60.0..=0.0, vol, move |v| Message::Slide(tt.clone(), v))
+                    .step(1.0_f32)
+                    .on_release(Message::Release)
+                    .width(Length::FillPortion(3))
+                    .style(fader_style(ACCENT, mute)),
+                text(db_label(vol)).size(12).color(DIM).width(44),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center);
+            return card(column![top, bottom].spacing(10).padding([10, 14])).width(Length::Fill).into();
+        }
 
         card(
             row![
@@ -2485,7 +2523,9 @@ impl App {
             let sidebar = w >= SIDEBAR_MIN;
             let n = channels.len().max(1) as f32;
             let strips_w = if sidebar { w - 196.0 - 12.0 } else { w };
-            let strip_w = (strips_w - 12.0 * (n - 1.0)) / n;
+            let strip_w = ((strips_w - 12.0 * (n - 1.0)) / n).floor();
+            let scroll = strip_w < MIN_STRIP;
+            let strip_w = strip_w.max(MIN_STRIP);
 
             let mut strips = row![].spacing(12).height(Length::Fill);
             let label_w = channels
@@ -2495,6 +2535,16 @@ impl App {
             for c in channels {
                 strips = strips.push(self.strip(c, mixes, strip_w, label_w));
             }
+            // Too narrow for every strip: keep them usable and scroll sideways.
+            let strips: Element<'_, Message> = if scroll {
+                scrollable(container(strips).padding(iced::Padding::ZERO.bottom(12)))
+                    .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new().width(6).scroller_width(6)))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                strips.into()
+            };
             let inputs: Element<'_, Message> = if sidebar {
                 row![strips, self.device_panel()].spacing(12).height(Length::Fill).into()
             } else {
@@ -2502,9 +2552,10 @@ impl App {
             };
 
             let compact = w < COMPACT_OUTPUTS;
+            let two_line = w < TWO_LINE_OUTPUTS;
             let mut outputs = column![].spacing(10);
             for m in mixes {
-                outputs = outputs.push(self.output_row(m, compact));
+                outputs = outputs.push(self.output_row(m, compact, two_line));
             }
             column![inputs, heading("OUTPUTS"), outputs].spacing(12).into()
         });

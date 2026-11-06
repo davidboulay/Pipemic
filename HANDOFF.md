@@ -172,3 +172,8 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   `pipemic.*` node, Spotify falls back to the default sink, the Wave:3 stays default source; start restores routes.
 - Mic gain was found at 6.5 dB (was ~38). The ALSA "Mic Capture Volume" (0–80 = 0–40 dB) *is* the hardware gain,
   so app AGC or a volume slider on the Wave:3 source changes it. Open: lock it.
+- Robot voice came back (2026-11-06): the PR #7 bridge never split clocks. Both loopback halves shared
+  `node.group`/`node.link-group`, and PipeWire 1.6 schedules a link-group under one driver, so the Wave:3 still
+  followed the CalDigit (pw-top errors climbing on the Wave source). Fix: each half gets its own `node.group` and
+  `node.link-group`, `target.delay.sec = 0.02`. Verified: the Wave:3 drives itself (quantum 256), its error count
+  stays flat, and Outgoing still reaches Slack. Check with `pw-top`: the Wave source must be a driver line, not `+`.

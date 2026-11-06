@@ -206,3 +206,7 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   Steps tried on the way: mix side 1024 + delay 0.02 = robot voice (buffer ran dry each cycle); mix 1024 +
   device 512 + delay 0.05 = warped voice (rate correction wobble). Verified by ear on the CalDigit and on AirPods;
   pw-top 0 errors over 20 s on AirPods. Mic path latency is now ~70 ms (was ~25 ms).
+- Slack huddle (2026-11-06): Slack asks for latency 480 and pulled its clock group to quantum 256: crackle on
+  AirPods when Slack used Pipemic Outgoing (mix group), warped voice when Slack used the Wave:3 directly (device
+  group, bridge steps uneven). Fix: both bridge halves `node.force-quantum = 1024`. Verified with a live huddle,
+  both mic choices: both groups stay at 1024, 0 errors over 15 s.

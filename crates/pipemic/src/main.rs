@@ -598,7 +598,9 @@ enum Message {
     SignOut,
     ThumbsDone(Vec<(String, Vec<u8>)>),
     /// Move every file of this preset (library and Downloads) to the trash.
-    DeleteLocal(String),
+    /// Trash a preset (file name inside it, name shown in the list) and take
+    /// it off every channel using it.
+    DeleteLocal(String, String),
     RefreshAddons,
     ToastDone(u64),
     /// The "Added" mark next to a just-installed add-on has been shown long enough.
@@ -1109,11 +1111,24 @@ impl App {
             Message::CancelWait => {
                 self.pending = None;
             }
-            Message::DeleteLocal(name) => {
+            Message::DeleteLocal(name, shown) => {
                 if let Err(e) = addons::trash_preset(&name) {
                     self.fx_error = Some(e);
+                    return Task::none();
                 }
-                return Task::perform(blocking(addons::scan_downloads), Message::Downloads);
+                // A deleted preset can't stay applied: remove it from every channel using it.
+                let using: Vec<String> = self.config["channel"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|c| c["eq"]["name"].as_str().is_some_and(|n| n == name || n == shown))
+                    .filter_map(|c| c["id"].as_str().map(String::from))
+                    .collect();
+                let mut tasks = vec![Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
+                for c in using {
+                    tasks.push(Task::perform(send(json!({"cmd": "eq", "channel": c, "clear": true})), Message::EqDone));
+                }
+                return Task::batch(tasks);
             }
             Message::MarketLink(url) => {
                 let show = self.bring_forward();
@@ -2190,7 +2205,7 @@ impl App {
                         .on_press(Message::EqImport(cid.to_string(), p.path.clone(), Some(shown.clone()))),
                 )
             };
-            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.name.clone()));
+            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.name.clone(), shown.clone()));
             line = line.push(iced::widget::tooltip(del, tooltip_box("Move this preset's files to the trash".into()), iced::widget::tooltip::Position::Left).gap(6));
             local = local.push(container(line).padding([6, 10]));
         }

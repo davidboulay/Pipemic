@@ -2226,13 +2226,24 @@ impl App {
                     ]
                     .spacing(2)
                     .width(Length::Fill);
+                    // Installs right here when Pipemic can (signed in, free);
+                    // otherwise it's a link to the product page.
+                    let direct = self.signed_in && a.free;
                     let get = |label: &'static str| -> Element<'a, Message> {
-                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
+                        let content = if direct {
+                            row![icon(icons::DOWNLOAD, 14.0, TEXT), text(label).size(12).font(SEMIBOLD)]
+                        } else {
+                            row![text(label).size(12).font(SEMIBOLD), icon(icons::EXTERNAL, 13.0, TEXT)]
+                        };
+                        let b = button(content.spacing(6).align_y(Alignment::Center))
+                            .padding([5, 14])
+                            .style(soft_button)
+                            .on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
                         iced::widget::tooltip(
                             b,
                             tooltip_box(
-                                if self.signed_in {
-                                    "Adds it to your Elgato library if it's free, then installs it here.".into()
+                                if direct {
+                                    "Adds it to your Elgato library and applies it to this channel.".into()
                                 } else {
                                     "Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()
                                 },
@@ -2266,7 +2277,7 @@ impl App {
                             .on_press(Message::EqImport(cid.to_string(), l.path.clone(), Some(a.name.clone())))
                             .into()
                     } else {
-                        get("Get")
+                        get(if direct { "Install" } else { "Get" })
                     };
                     let thumb: Element<'a, Message> = match self.thumbs.get(&a.id) {
                         Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),

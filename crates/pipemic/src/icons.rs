@@ -33,6 +33,10 @@ pub const GEAR: &str = glyph!(r#"<circle cx="12" cy="12" r="3"/><path d="M19.4 1
 /// the mute slash across it, unlike a diagonal arrow.)
 pub const OUTGOING: &str = glyph!(r#"<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>"#);
 /// Equalizer / effects: three faders.
+/// Arrow down into a tray: "install".
+pub const DOWNLOAD: &str = glyph!(r#"<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>"#);
+/// Box with an arrow out of its corner: "opens in the browser".
+pub const EXTERNAL: &str = glyph!(r#"<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>"#);
 pub const EQ: &str = glyph!(r#"<path d="M6 4v5M6 13v7M12 4v11M12 19v1M18 4v2M18 10v10"/><circle cx="6" cy="11" r="2"/><circle cx="12" cy="17" r="2"/><circle cx="18" cy="8" r="2"/>"#);
 pub const PLUG: &str = glyph!(r#"<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/>"#);
 

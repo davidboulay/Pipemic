@@ -2054,7 +2054,7 @@ impl App {
     fn account_row<'a>(&'a self) -> Element<'a, Message> {
         let (msg, b): (&str, Element<'a, Message>) = if self.signed_in {
             (
-                "Signed in to Elgato: Get installs presets directly.",
+                "Signed in to Elgato: Install adds free presets to your library and applies them here.",
                 button(text("Sign out").size(12)).padding([5, 12]).style(soft_button).on_press(Message::SignOut).into(),
             )
         } else {

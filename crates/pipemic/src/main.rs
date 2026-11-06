@@ -1714,7 +1714,7 @@ impl App {
     /// Thumbnail of the marketplace add-on a preset came from.
     fn thumb_for<'a>(&'a self, name: &str, size: f32) -> Element<'a, Message> {
         match self.addon_named(name).and_then(|a| self.thumbs.get(&a.id)) {
-            Some(h) => image(h.clone()).width(size * 2.0).height(size).border_radius(6).into(),
+            Some(h) => image(h.clone()).width(size * 2.0).height(size).border_radius(8).into(),
             None => Self::thumb_blank(size),
         }
     }
@@ -1774,7 +1774,7 @@ impl App {
             let name = current.clone().unwrap_or_default();
             group(column![
                 row![
-                    self.thumb_for(&name, 40.0),
+                    self.thumb_for(&name, 64.0),
                     column![
                         text(name.clone()).size(14).font(SEMIBOLD),
                         text(if on { "On" } else { "Off: the sound passes unchanged" }).size(11).color(if on { ON } else { DIM }),
@@ -1801,7 +1801,7 @@ impl App {
             if update {
                 info = info.push(text("Update available in the marketplace").size(11).color(ACCENT));
             }
-            let mut line = row![self.thumb_for(&p.name, 32.0), info].spacing(10).align_y(Alignment::Center);
+            let mut line = row![self.thumb_for(&p.name, 48.0), info].spacing(10).align_y(Alignment::Center);
             line = if using {
                 line.push(text("In use").size(11).color(ON))
             } else {
@@ -1837,10 +1837,7 @@ impl App {
                     let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
                     let info = column![
                         text(a.name.clone()).size(13).font(SEMIBOLD),
-                        text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) })
-                            .size(11)
-                            .color(DIM)
-                            .wrapping(iced::widget::text::Wrapping::None),
+                        text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) }).size(11).color(DIM),
                     ]
                     .spacing(2)
                     .width(Length::Fill);
@@ -1864,8 +1861,8 @@ impl App {
                         get("Get")
                     };
                     let thumb: Element<'a, Message> = match self.thumbs.get(&a.id) {
-                        Some(h) => image(h.clone()).width(80).height(40).border_radius(6).into(),
-                        None => Self::thumb_blank(40.0),
+                        Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
+                        None => Self::thumb_blank(64.0),
                     };
                     col = col.push(
                         container(row![thumb, container(info).clip(true).width(Length::Fill), action].spacing(12).align_y(Alignment::Center))

@@ -113,6 +113,8 @@ impl std::fmt::Display for InstallError {
 #[derive(Debug, Clone)]
 pub struct Download {
     pub product_name: String,
+    /// e.g. "1" or "1.0.0".
+    pub version: String,
     /// File name from the download link, e.g. "Old_Radio-1.0.0.xml".
     pub file_name: String,
     pub bytes: Vec<u8>,
@@ -178,7 +180,7 @@ pub fn download_variant(session: &mut Session, variant: &str) -> Result<(Downloa
     if !link.starts_with("https://mp-cdn.elgato.com/") {
         return Err(InstallError::Other("unexpected download host".into()));
     }
-    let file_name = link.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or("addon").to_string();
+    let file_name = percent_decode(link.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or("addon"));
     let bytes = ureq::get(link)
         .call()
         .map_err(|e| InstallError::Other(format!("download: {e}")))?
@@ -187,7 +189,31 @@ pub fn download_variant(session: &mut Session, variant: &str) -> Result<(Downloa
         .limit(64 * 1024 * 1024)
         .read_to_vec()
         .map_err(|e| InstallError::Other(format!("download: {e}")))?;
-    Ok((Download { product_name: v["product_name"].as_str().unwrap_or("").to_string(), file_name, bytes }, changed))
+    let version = match &v["version_number"] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    };
+    Ok((Download { product_name: v["product_name"].as_str().unwrap_or("").to_string(), version, file_name, bytes }, changed))
+}
+
+/// "Retro's%20Cinema%20EQ-1.xml" -> "Retro's Cinema EQ-1.xml".
+pub fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(x) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(x);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Name and thumbnail of an add-on variant (public, no sign-in).
@@ -279,6 +305,8 @@ mod tests {
         assert_eq!(s.cookies[1].1, "a2");
         assert_eq!(download_variant(&mut Session::default(), "abc").unwrap_err(), InstallError::SignIn);
         assert!(matches!(download_variant(&mut s, "../x"), Err(InstallError::Other(_))));
+        assert_eq!(percent_decode("Retro's%20Cinema%20EQ-1.xml"), "Retro's Cinema EQ-1.xml");
+        assert_eq!(percent_decode("a%2"), "a%2");
     }
 
     #[test]

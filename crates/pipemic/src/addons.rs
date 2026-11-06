@@ -287,13 +287,27 @@ pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog:
     let (dl, _) = result?;
     let text = String::from_utf8(dl.bytes).map_err(|_| InstallError::Other(format!("{} isn't an EQ preset", dl.product_name)))?;
     let name = preset_name(&text).ok_or_else(|| InstallError::Other(format!("{} isn't an EQ preset Pipemic can use", dl.product_name)))?;
-    let file: String = dl.file_name.chars().filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
-    let file = if file.to_lowercase().ends_with(".xml") { file } else { format!("{file}.xml") };
+    // Named after the marketplace product ("<name>-<version>.xml") so the
+    // marketplace list recognises it (the name inside the file can differ).
+    let file = library_file_name(&dl.product_name, &dl.version).unwrap_or_else(|| safe_file_name(&dl.file_name));
     let dir = library_dir();
     std::fs::create_dir_all(&dir).map_err(|e| InstallError::Other(e.to_string()))?;
     let path = dir.join(file);
     std::fs::write(&path, text).map_err(|e| InstallError::Other(e.to_string()))?;
     Ok((name, path))
+}
+
+/// Letters, digits, spaces and a few safe signs; never a path.
+fn safe_file_name(s: &str) -> String {
+    let f: String = s.chars().filter(|c| c.is_alphanumeric() || " -_.'&()".contains(*c)).collect();
+    let f = f.trim().trim_start_matches('.').to_string();
+    let f = if f.is_empty() { "preset".to_string() } else { f };
+    if f.to_lowercase().ends_with(".xml") { f } else { format!("{f}.xml") }
+}
+
+fn library_file_name(product: &str, version: &str) -> Option<String> {
+    let p = product.trim();
+    (!p.is_empty()).then(|| safe_file_name(&if version.is_empty() { p.to_string() } else { format!("{p}-{version}") }))
 }
 
 /// Open a web page in the user's browser.
@@ -354,6 +368,14 @@ mod tests {
         assert_eq!(preset_link("wavelink-v2://presets/install/e1085e92-1a5d/?x=1").as_deref(), Some("e1085e92-1a5d"));
         assert_eq!(preset_link("wavelink://vst/install/e1085e92-1a5d"), None);
         assert_eq!(preset_link("wavelink://presets/install/../../etc"), None);
+    }
+
+    #[test]
+    fn file_names() {
+        assert_eq!(library_file_name("Retro's Cinema EQ", "1").as_deref(), Some("Retro's Cinema EQ-1.xml"));
+        assert_eq!(safe_file_name("../../etc/passwd"), "etcpasswd.xml");
+        let p = LocalPreset { name: "Retro VLC Movie".into(), path: "/l/Retro's Cinema EQ-1.xml".into(), version: None, modified: std::time::UNIX_EPOCH };
+        assert!(p.is("Retro's Cinema EQ"));
     }
 
     #[test]

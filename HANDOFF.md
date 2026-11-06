@@ -177,3 +177,6 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   followed the CalDigit (pw-top errors climbing on the Wave source). Fix: each half gets its own `node.group` and
   `node.link-group`, `target.delay.sec = 0.02`. Verified: the Wave:3 drives itself (quantum 256), its error count
   stays flat, and Outgoing still reaches Slack. Check with `pw-top`: the Wave source must be a driver line, not `+`.
+- Replug (2026-11-06): the Wave:3 came back on profile `output:iec958-stereo` (no mic source); UI showed Live, no
+  input. pipemicd now checks after every connect and sets `output:analog-stereo+input:mono-fallback` if the card
+  has no Wave:3 source. Verified by forcing iec958 and restarting pipemicd: fixed in 3 s, bridge relinked.

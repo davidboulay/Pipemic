@@ -596,6 +596,8 @@ enum Message {
     DeleteLocal(String),
     RefreshAddons,
     ToastDone(u64),
+    /// The "Added" mark next to a just-installed add-on has been shown long enough.
+    AddedDone(u64),
     FileDropped(std::path::PathBuf),
     /// "Open with Wave Link" on the marketplace site.
     MarketLink(String),
@@ -683,6 +685,11 @@ struct App {
     /// Add-on id -> thumbnail.
     thumbs: HashMap<String, image::Handle>,
     pending: Option<Pending>,
+    /// Marketplace add-on being added and downloaded (its row shows "Installing…").
+    installing: Option<String>,
+    /// Add-on just installed: its row stays in the marketplace list for a few
+    /// seconds marked "Added", next to where the user pressed Get.
+    just_added: Option<(u64, String)>,
     /// Short confirmation ("Old Radio added to Other") and its id.
     toast: Option<(u64, String)>,
     incoming: Option<Incoming>,
@@ -1078,7 +1085,7 @@ impl App {
                 if let (true, Some(v)) = (self.signed_in, variant) {
                     let channel = self.fx.clone();
                     self.fx_error = None;
-                    self.toast_now(format!("Installing {name}…"));
+                    self.installing = Some(name);
                     return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
                         variant: String::new(),
                         channel: channel.clone(),
@@ -1154,6 +1161,9 @@ impl App {
             }
             Message::Installed { variant, channel, url, result } => {
                 use wave_catalog::marketplace::InstallError;
+                if variant.is_empty() && result.is_err() {
+                    self.installing = None;
+                }
                 let rescan = Task::perform(blocking(addons::scan_downloads), Message::Downloads);
                 let from_link = !variant.is_empty();
                 // The website no longer accepted the session (even renewed).
@@ -1171,12 +1181,14 @@ impl App {
                         return rescan;
                     }
                     (false, Ok((name, path))) => {
-                        self.toast = None;
+                        let row = self.installing.take().unwrap_or_else(|| name.clone());
                         let Some(c) = channel else { return rescan };
-                        let msg = format!("{name} added to {}", self.channel_label(&c));
+                        let id = self.just_added.as_ref().map_or(0, |(i, _)| i + 1);
+                        self.just_added = Some((id, row));
                         return Task::batch([
                             rescan,
-                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone).chain(self.toast(msg)),
+                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone),
+                            Task::perform(tokio_sleep(4000), move |_| Message::AddedDone(id)),
                         ]);
                     }
                     (false, Err(InstallError::Other(e))) => {
@@ -1230,6 +1242,11 @@ impl App {
                 self.signed_in = false;
             }
             Message::Focus(f) => self.focused = f,
+            Message::AddedDone(id) => {
+                if self.just_added.as_ref().is_some_and(|(i, _)| *i == id) {
+                    self.just_added = None;
+                }
+            }
             Message::ToastDone(id) => {
                 if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
                     self.toast = None;
@@ -1262,12 +1279,6 @@ impl App {
     /// Waiting for the file of an add-on opened from the marketplace?
     fn waiting_link(&self) -> bool {
         self.incoming.as_ref().is_some_and(|i| i.state == IncomingState::Waiting)
-    }
-
-    /// Show a toast that stays until replaced.
-    fn toast_now(&mut self, msg: String) {
-        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
-        self.toast = Some((id, msg));
     }
 
     /// Name of the marketplace add-on with this product page.
@@ -2191,24 +2202,42 @@ impl App {
             AddonList::Done(Err(e)) => text(format!("Couldn't load the marketplace: {e}")).size(12).color(MUTED).into(),
             AddonList::Done(Ok(list)) => {
                 let mut col = column![].spacing(2);
+                let mut shown = 0;
                 let mut items: Vec<_> = list.iter().filter(|a| a.runs_on_linux()).collect();
                 items.sort_by_key(|a| a.name.to_lowercase());
                 for a in items {
                     let local = self.downloads.iter().find(|l| l.is(&a.name));
                     let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
+                    // Installed ones live in the section above; they stay here only to offer an update.
+                    let added = self.just_added.as_ref().is_some_and(|(_, n)| *n == a.name);
+                    if local.is_some() && !update && !added && waiting.as_deref() != Some(a.name.as_str()) {
+                        continue;
+                    }
+                    shown += 1;
                     let info = column![
                         text(a.name.clone()).size(13).font(SEMIBOLD),
                         text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) }).size(11).color(DIM),
                     ]
                     .spacing(2)
                     .width(Length::Fill);
+                    // Installs right here when Pipemic can (signed in, free);
+                    // otherwise it's a link to the product page.
+                    let direct = self.signed_in && a.free;
                     let get = |label: &'static str| -> Element<'a, Message> {
-                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
+                        let content = if direct {
+                            row![icon(icons::DOWNLOAD, 14.0, TEXT), text(label).size(12).font(SEMIBOLD)]
+                        } else {
+                            row![text(label).size(12).font(SEMIBOLD), icon(icons::EXTERNAL, 13.0, TEXT)]
+                        };
+                        let b = button(content.spacing(6).align_y(Alignment::Center))
+                            .padding([5, 14])
+                            .style(soft_button)
+                            .on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
                         iced::widget::tooltip(
                             b,
                             tooltip_box(
-                                if self.signed_in {
-                                    "Adds it to your Elgato library if it's free, then installs it here.".into()
+                                if direct {
+                                    "Adds it to your Elgato library and applies it to this channel.".into()
                                 } else {
                                     "Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()
                                 },
@@ -2219,7 +2248,11 @@ impl App {
                         .into()
                     };
                     let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
-                    let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
+                    let action: Element<'a, Message> = if added {
+                        text("Added").size(11).color(ON).into()
+                    } else if self.installing.as_deref() == Some(a.name.as_str()) {
+                        text("Installing…").size(11).color(ACCENT).into()
+                    } else if waiting.as_deref() == Some(a.name.as_str()) {
                         row![
                             text("Waiting for the download…").size(11).color(ACCENT),
                             button(text("Cancel").size(12)).padding([5, 14]).style(soft_button).on_press(Message::CancelWait),
@@ -2238,7 +2271,7 @@ impl App {
                             .on_press(Message::EqImport(cid.to_string(), l.path.clone(), Some(a.name.clone())))
                             .into()
                     } else {
-                        get("Get")
+                        get(if direct { "Install" } else { "Get" })
                     };
                     let thumb: Element<'a, Message> = match self.thumbs.get(&a.id) {
                         Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
@@ -2246,6 +2279,12 @@ impl App {
                     };
                     col = col.push(
                         container(row![thumb, container(info).clip(true).width(Length::Fill), action].spacing(12).align_y(Alignment::Center))
+                            .padding([6, 10]),
+                    );
+                }
+                if shown == 0 {
+                    col = col.push(
+                        container(text("You have every marketplace preset. New ones show up here when they're published.").size(12).color(DIM))
                             .padding([6, 10]),
                     );
                 }
@@ -2272,8 +2311,10 @@ impl App {
             ]
             .spacing(2)
             .width(Length::Fill),
-            button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)),
         ]
+        // Notices about add-ons ("… added to Microphone") show here, not behind the sheet.
+        .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+        .push(button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)))
         .spacing(12)
         .align_y(Alignment::Center)]
         .spacing(16);
@@ -2471,7 +2512,7 @@ impl App {
         let main = container(
             column![
                 row![heading("INPUTS"), Space::new().width(Length::Fill)]
-                    .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+                    .push(self.toast.as_ref().filter(|_| self.fx.is_none()).map(|(_, m)| text(m.clone()).size(12).color(ON)))
                     .extend([status, gear.into()])
                     .spacing(12)
                     .align_y(Alignment::Center),

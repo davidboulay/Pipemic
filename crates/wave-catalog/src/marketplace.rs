@@ -26,6 +26,8 @@ pub struct Addon {
     /// Latest version, e.g. "1.0.0" (from the product details; only fetched
     /// for add-ons that run on Linux).
     pub version: Option<String>,
+    /// Free with no licence: Pipemic can add it to the user's library itself.
+    pub free: bool,
 }
 
 impl Addon {
@@ -309,6 +311,9 @@ pub fn parse_page(body: &str) -> Result<(Vec<Addon>, Option<String>), String> {
                 variant_ids: p["variants"].as_array().into_iter().flatten().filter_map(|x| x["id"].as_str().map(String::from)).collect(),
                 thumbnail: p["thumbnail_cdn"].as_str().filter(|u| !u.is_empty()).map(String::from),
                 version: None,
+                free: p["variants"].as_array().and_then(|v| v.first()).is_some_and(|x| {
+                    x["is_free"] == true && x["needs_license"] != true && x["prices"].as_array().is_none_or(|ps| ps.is_empty())
+                }),
             })
         })
         .collect();

@@ -559,10 +559,24 @@ enum Message {
     /// Put an EQ preset file on a channel.
     EqImport(String, std::path::PathBuf),
     EqEnabled(String, bool),
-    EqRemove(String),
     EqDone(Result<Value, String>),
-    OpenUrl(String),
+    /// Open an add-on's page and apply its file once it's downloaded.
+    Get { name: String, url: String },
+    ThumbsDone(Vec<(String, Vec<u8>)>),
+    /// Move a downloaded preset file to the trash.
+    DeleteLocal(std::path::PathBuf),
+    RefreshAddons,
+    ToastDone(u64),
     FileDropped(std::path::PathBuf),
+}
+
+/// An add-on the user went to download: applied to `channel` when its
+/// file shows up in Downloads.
+#[derive(Debug, Clone)]
+struct Pending {
+    channel: String,
+    name: String,
+    since: std::time::SystemTime,
 }
 
 #[derive(Default)]
@@ -607,6 +621,13 @@ struct App {
     downloads: Vec<addons::LocalPreset>,
     /// Last effects error, shown in the sheet.
     fx_error: Option<String>,
+    /// When the marketplace list was last fetched.
+    addons_at: Option<std::time::Instant>,
+    /// Add-on id -> thumbnail.
+    thumbs: HashMap<String, image::Handle>,
+    pending: Option<Pending>,
+    /// Short confirmation ("Old Radio added to Other") and its id.
+    toast: Option<(u64, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -705,6 +726,8 @@ impl App {
             time::every(Duration::from_millis(250)).map(|_| Message::Tick),
             time::every(Duration::from_secs(2)).map(|_| Message::AppsTick),
             time::every(Duration::from_millis(33)).map(|_| Message::MeterTick),
+            // New and updated marketplace add-ons.
+            time::every(Duration::from_secs(3600)).map(|_| Message::RefreshAddons),
         ])
     }
 
@@ -767,7 +790,7 @@ impl App {
             Message::Tick => return Task::perform(send(json!({"cmd": "status"})), Message::Status),
             Message::AppsTick => {
                 let mut t = vec![self.apps_request()];
-                if self.fx.is_some() {
+                if self.fx.is_some() || self.pending.is_some() {
                     t.push(Task::perform(blocking(addons::scan_downloads), Message::Downloads));
                 }
                 return Task::batch(t);
@@ -899,21 +922,93 @@ impl App {
                 if self.fx.is_none() {
                     return Task::none();
                 }
+                let stale = self.addons_at.is_none_or(|t| t.elapsed() > Duration::from_secs(1800));
                 let mut t = vec![Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
-                if !matches!(self.addons, AddonList::Loading | AddonList::Done(Ok(_))) {
-                    self.addons = AddonList::Loading;
-                    t.push(Task::perform(blocking(wave_catalog::marketplace::wave_link_addons), Message::AddonsDone));
+                if stale || matches!(self.addons, AddonList::Done(Err(_))) {
+                    t.push(self.update(Message::RefreshAddons));
                 }
                 return Task::batch(t);
             }
-            Message::AddonsDone(r) => self.addons = AddonList::Done(r),
-            Message::Downloads(d) => self.downloads = d,
+            Message::RefreshAddons => {
+                if matches!(self.addons, AddonList::Loading) {
+                    return Task::none();
+                }
+                // Keep showing the old list while refreshing.
+                if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                    self.addons = AddonList::Loading;
+                }
+                return Task::perform(blocking(wave_catalog::marketplace::wave_link_addons), Message::AddonsDone);
+            }
+            Message::AddonsDone(r) => {
+                let mut t = Task::none();
+                match r {
+                    Ok(list) => {
+                        self.addons_at = Some(std::time::Instant::now());
+                        let want: Vec<(String, String)> = list
+                            .iter()
+                            .filter(|a| a.runs_on_linux() && !self.thumbs.contains_key(&a.id))
+                            .filter_map(|a| Some((a.id.clone(), a.thumbnail.clone()?)))
+                            .collect();
+                        if !want.is_empty() {
+                            t = Task::perform(blocking(move || addons::thumbnails(want)), Message::ThumbsDone);
+                        }
+                        self.addons = AddonList::Done(Ok(list));
+                    }
+                    // A failed refresh keeps the list we have.
+                    Err(e) => {
+                        if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                            self.addons = AddonList::Done(Err(e));
+                        }
+                    }
+                }
+                return t;
+            }
+            Message::ThumbsDone(v) => {
+                for (id, bytes) in v {
+                    self.thumbs.insert(id, image::Handle::from_bytes(bytes));
+                }
+            }
+            Message::Downloads(d) => {
+                self.downloads = d;
+                // The add-on the user went to get has arrived: apply it.
+                if let Some(p) = self.pending.clone() {
+                    let fresh = self.downloads.iter().find(|l| l.is(&p.name) && l.modified + Duration::from_secs(5) >= p.since);
+                    if let Some(l) = fresh {
+                        self.pending = None;
+                        let (c, path) = (p.channel.clone(), l.path.clone());
+                        let msg = format!("{} added to {}", l.name, self.channel_label(&p.channel));
+                        return Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path})), Message::EqDone)
+                            .chain(self.toast(msg));
+                    } else if p.since.elapsed().is_ok_and(|e| e > Duration::from_secs(900)) {
+                        self.pending = None; // gave up waiting
+                    }
+                }
+            }
+            Message::Get { name, url } => {
+                if let Some(c) = self.fx.clone() {
+                    self.pending = Some(Pending { channel: c, name, since: std::time::SystemTime::now() });
+                }
+                if let Err(e) = addons::open_url(&url) {
+                    self.fx_error = Some(e);
+                    self.pending = None;
+                }
+            }
+            Message::DeleteLocal(path) => {
+                if let Err(e) = addons::trash(&path) {
+                    self.fx_error = Some(e);
+                }
+                return Task::perform(blocking(addons::scan_downloads), Message::Downloads);
+            }
+            Message::ToastDone(id) => {
+                if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
+                    self.toast = None;
+                }
+            }
             Message::EqImport(c, path) => {
                 let req = json!({"cmd": "eq", "channel": c, "import": path});
                 return Task::perform(send(req), Message::EqDone);
             }
             Message::EqEnabled(c, on) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "enabled": on})), Message::EqDone),
-            Message::EqRemove(c) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "clear": true})), Message::EqDone),
             Message::EqDone(r) => match r {
                 Ok(v) => {
                     self.fx_error = None;
@@ -921,11 +1016,6 @@ impl App {
                 }
                 Err(e) => self.fx_error = Some(e),
             },
-            Message::OpenUrl(u) => {
-                if let Err(e) = addons::open_url(&u) {
-                    self.fx_error = Some(e);
-                }
-            }
             Message::FileDropped(p) => {
                 if let Some(c) = self.fx.clone() {
                     return self.update(Message::EqImport(c, p));
@@ -936,6 +1026,13 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Show a short confirmation for a few seconds.
+    fn toast(&mut self, msg: String) -> Task<Message> {
+        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
+        self.toast = Some((id, msg));
+        Task::perform(tokio_sleep(5000), move |_| Message::ToastDone(id))
     }
 
     // ---- model helpers ---------------------------------------------------
@@ -1593,6 +1690,35 @@ impl App {
         r.into()
     }
 
+    /// Marketplace add-on a preset name belongs to, if listed.
+    fn addon_named(&self, name: &str) -> Option<&wave_catalog::marketplace::Addon> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        let probe = addons::LocalPreset { name: name.to_string(), path: Default::default(), version: None, modified: std::time::UNIX_EPOCH };
+        list.iter().find(|a| a.runs_on_linux() && probe.is(&a.name))
+    }
+
+    /// Is the marketplace version newer than the downloaded one?
+    fn newer(latest: Option<&str>, have: Option<&str>) -> bool {
+        matches!((latest, have), (Some(l), Some(h)) if wave_catalog::is_newer(l, h))
+    }
+
+    /// Marketplace thumbnails are 2:1; `size` is the height.
+    fn thumb_blank<'a>(size: f32) -> Element<'a, Message> {
+        container(icon(icons::EQ, size * 0.45, DIM))
+            .center_y(size)
+            .center_x(size * 2.0)
+            .style(|_| container::Style { background: Some(RAIL.into()), border: border::rounded(8), ..Default::default() })
+            .into()
+    }
+
+    /// Thumbnail of the marketplace add-on a preset came from.
+    fn thumb_for<'a>(&'a self, name: &str, size: f32) -> Element<'a, Message> {
+        match self.addon_named(name).and_then(|a| self.thumbs.get(&a.id)) {
+            Some(h) => image(h.clone()).width(size * 2.0).height(size).border_radius(6).into(),
+            None => Self::thumb_blank(size),
+        }
+    }
+
     /// Under a strip's apps: the channel's EQ (name, on/off) or "Effects".
     fn fx_chip<'a>(&'a self, c: &Value, compact: bool) -> Element<'a, Message> {
         let cid = c["id"].as_str().unwrap_or("").to_string();
@@ -1635,7 +1761,8 @@ impl App {
             ..Default::default()
         });
 
-        // Current equalizer.
+        // Current equalizer: one switch (bypass to compare); picking another
+        // preset below replaces it.
         let eq_group: Element<'a, Message> = if eq.is_object() {
             let on = eq["enabled"] != false;
             let mut bands = column![].spacing(4);
@@ -1643,20 +1770,22 @@ impl App {
                 let off = b["on"] == false;
                 bands = bands.push(text(format!("{}{}", addons::band_label(b), if off { " (off)" } else { "" })).size(12).color(DIM));
             }
-            let (c1, c2) = (cid.to_string(), cid.to_string());
+            let c1 = cid.to_string();
+            let name = current.clone().unwrap_or_default();
             group(column![
                 row![
-                    text(current.clone().unwrap_or_default()).size(14).font(SEMIBOLD).width(Length::Fill),
+                    self.thumb_for(&name, 40.0),
+                    column![
+                        text(name.clone()).size(14).font(SEMIBOLD),
+                        text(if on { "On" } else { "Off: the sound passes unchanged" }).size(11).color(if on { ON } else { DIM }),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
                     toggler(on).size(18).style(switch_style).on_toggle(move |v| Message::EqEnabled(c1.clone(), v)),
                 ]
+                .spacing(12)
                 .align_y(Alignment::Center),
                 bands,
-                separator(),
-                row![
-                    text(if on { "On: the mixes get the equalized sound." } else { "Off: the sound passes unchanged." }).size(12).color(DIM).width(Length::Fill),
-                    button(text("Remove").size(12)).padding([5, 12]).style(soft_button).on_press(Message::EqRemove(c2)),
-                ]
-                .align_y(Alignment::Center),
             ]
             .spacing(10))
         } else {
@@ -1667,7 +1796,12 @@ impl App {
         let mut local = column![].spacing(2);
         for p in &self.downloads {
             let using = current.as_deref() == Some(p.name.as_str());
-            let mut line = row![text(p.name.clone()).size(13).width(Length::Fill)].spacing(10).align_y(Alignment::Center);
+            let update = self.addon_named(&p.name).is_some_and(|a| Self::newer(a.version.as_deref(), p.version.as_deref()));
+            let mut info = column![text(p.name.clone()).size(13)].spacing(2).width(Length::Fill);
+            if update {
+                info = info.push(text("Update available in the marketplace").size(11).color(ACCENT));
+            }
+            let mut line = row![self.thumb_for(&p.name, 32.0), info].spacing(10).align_y(Alignment::Center);
             line = if using {
                 line.push(text("In use").size(11).color(ON))
             } else {
@@ -1678,26 +1812,29 @@ impl App {
                         .on_press(Message::EqImport(cid.to_string(), p.path.clone())),
                 )
             };
+            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.path.clone()));
+            line = line.push(iced::widget::tooltip(del, tooltip_box("Move this preset file to the trash".into()), iced::widget::tooltip::Position::Left).gap(6));
             local = local.push(container(line).padding([6, 10]));
         }
         let downloads_dir = addons::downloads_dir();
         let local_hint = if self.downloads.is_empty() {
-            format!("No EQ presets in {} yet. Get one below; it shows up here once downloaded. You can also drop a preset file on this window.", downloads_dir.display())
+            format!("No EQ presets in {} yet. Get one below: it's applied here as soon as it's downloaded.", downloads_dir.display())
         } else {
             format!("Found in {}. You can also drop a preset file on this window.", downloads_dir.display())
         };
 
         // Marketplace.
+        let waiting = self.pending.as_ref().filter(|p| p.channel == cid).map(|p| p.name.clone());
         let market: Element<'a, Message> = match &self.addons {
             AddonList::Idle | AddonList::Loading => text("Loading the marketplace…").size(12).color(DIM).into(),
             AddonList::Done(Err(e)) => text(format!("Couldn't load the marketplace: {e}")).size(12).color(MUTED).into(),
             AddonList::Done(Ok(list)) => {
                 let mut col = column![].spacing(2);
-                let have: Vec<String> = self.downloads.iter().map(|d| d.name.to_lowercase()).collect();
                 let mut items: Vec<_> = list.iter().filter(|a| a.runs_on_linux()).collect();
                 items.sort_by_key(|a| a.name.to_lowercase());
                 for a in items {
-                    let got = have.contains(&a.name.to_lowercase());
+                    let local = self.downloads.iter().find(|l| l.is(&a.name));
+                    let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
                     let info = column![
                         text(a.name.clone()).size(13).font(SEMIBOLD),
                         text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) })
@@ -1707,15 +1844,33 @@ impl App {
                     ]
                     .spacing(2)
                     .width(Length::Fill);
-                    let action: Element<'a, Message> = if got {
+                    let get = |label: &'static str| -> Element<'a, Message> {
+                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone() });
+                        iced::widget::tooltip(
+                            b,
+                            tooltip_box("Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()),
+                            iced::widget::tooltip::Position::Left,
+                        )
+                        .gap(6)
+                        .into()
+                    };
+                    let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
+                        text("Waiting for the download…").size(11).color(ACCENT).into()
+                    } else if update {
+                        get("Update")
+                    } else if local.is_some() {
                         text("Downloaded").size(11).color(DIM).into()
                     } else {
-                        let b = button(text("Get").size(12)).padding([5, 14]).style(soft_button).on_press(Message::OpenUrl(a.url.clone()));
-                        iced::widget::tooltip(b, tooltip_box("Opens the product page. Download it with your Elgato account.".into()), iced::widget::tooltip::Position::Left)
-                            .gap(6)
-                            .into()
+                        get("Get")
                     };
-                    col = col.push(container(row![container(info).clip(true).width(Length::Fill), action].spacing(10).align_y(Alignment::Center)).padding([6, 10]));
+                    let thumb: Element<'a, Message> = match self.thumbs.get(&a.id) {
+                        Some(h) => image(h.clone()).width(80).height(40).border_radius(6).into(),
+                        None => Self::thumb_blank(40.0),
+                    };
+                    col = col.push(
+                        container(row![thumb, container(info).clip(true).width(Length::Fill), action].spacing(12).align_y(Alignment::Center))
+                            .padding([6, 10]),
+                    );
                 }
                 col.into()
             }
@@ -1728,7 +1883,7 @@ impl App {
         list = list
             .push(Space::new().height(4))
             .push(heading("ELGATO MARKETPLACE"))
-            .push(text("EQ presets work on Linux. Plugins (Windows/macOS only) are not listed.").size(11).color(DIM))
+            .push(text("EQ presets work on Linux. Plugins (Windows/macOS only) are not listed. Checked for new ones every hour.").size(11).color(DIM))
             .push(group(column![market]));
 
         let mut body = column![row![
@@ -1937,7 +2092,11 @@ impl App {
 
         let main = container(
             column![
-                row![heading("INPUTS"), Space::new().width(Length::Fill), status, gear].spacing(12).align_y(Alignment::Center),
+                row![heading("INPUTS"), Space::new().width(Length::Fill)]
+                    .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+                    .extend([status, gear.into()])
+                    .spacing(12)
+                    .align_y(Alignment::Center),
                 body,
             ]
             .spacing(12),

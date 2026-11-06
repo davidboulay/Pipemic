@@ -10,6 +10,32 @@ use std::path::{Path, PathBuf};
 pub struct LocalPreset {
     pub name: String,
     pub path: PathBuf,
+    /// From the marketplace file name, e.g. "Old_Radio-1.0.0_HdYjEzV.xml".
+    pub version: Option<String>,
+    pub modified: std::time::SystemTime,
+}
+
+impl LocalPreset {
+    /// Is this file (a download of) marketplace add-on `name`? Compares
+    /// letters and digits only, against the preset's own name and the
+    /// file name's prefix.
+    pub fn is(&self, name: &str) -> bool {
+        let key = norm(name);
+        let stem = self.path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let prefix = stem.rsplit_once('-').map_or(stem.as_str(), |(p, _)| p).to_string();
+        !key.is_empty() && (norm(&self.name) == key || norm(&prefix) == key)
+    }
+}
+
+fn norm(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// "Old_Radio-1.0.0_HdYjEzV" -> "1.0.0".
+pub fn file_version(stem: &str) -> Option<String> {
+    let (_, tail) = stem.rsplit_once('-')?;
+    let v = tail.split('_').next()?;
+    (v.chars().next()?.is_ascii_digit() && v.chars().all(|c| c.is_ascii_digit() || c == '.')).then(|| v.to_string())
 }
 
 /// The user's Downloads folder (XDG user dirs, else ~/Downloads).
@@ -61,13 +87,63 @@ pub fn scan_downloads() -> Vec<LocalPreset> {
     walk(&root, 0, &mut files);
     files.sort_by(|a, b| b.0.cmp(&a.0));
     let mut out: Vec<LocalPreset> = Vec::new();
-    for (_, path) in files {
+    for (modified, path) in files {
         let Some(name) = std::fs::read_to_string(&path).ok().as_deref().and_then(preset_name) else { continue };
         if !out.iter().any(|p| p.name == name) {
-            out.push(LocalPreset { name, path });
+            let version = path.file_stem().and_then(|s| file_version(&s.to_string_lossy()));
+            out.push(LocalPreset { name, path, version, modified });
         }
     }
     out
+}
+
+/// Move a file to the trash (freedesktop trash via `gio`, else KDE's
+/// `kioclient`); never deletes outright.
+pub fn trash(path: &Path) -> Result<(), String> {
+    let tries: [(&str, Vec<&std::ffi::OsStr>); 2] = [
+        ("gio", vec!["trash".as_ref(), path.as_os_str()]),
+        ("kioclient", vec!["move".as_ref(), path.as_os_str(), "trash:/".as_ref()]),
+    ];
+    for (cmd, args) in tries {
+        if let Ok(st) = std::process::Command::new(cmd).args(args).status() {
+            if st.success() {
+                return Ok(());
+            }
+        }
+    }
+    Err(format!("couldn't move {} to the trash", path.display()))
+}
+
+fn cache_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".cache")).join("pipemic/addons")
+}
+
+/// Thumbnail bytes per add-on id, from the cache or the CDN (cached by the
+/// URL's file name, so an updated image is fetched again).
+pub fn thumbnails(list: Vec<(String, String)>) -> Vec<(String, Vec<u8>)> {
+    let dir = cache_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let dir = &dir;
+    std::thread::scope(|sc| {
+        let jobs: Vec<_> = list.into_iter().map(|(id, url)| sc.spawn(move || thumbnail(dir, id, url))).collect();
+        jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
+    })
+}
+
+fn thumbnail(dir: &Path, id: String, url: String) -> Option<(String, Vec<u8>)> {
+    std::iter::once((id, url))
+        .filter_map(|(id, url)| {
+            let file: String = url.rsplit('/').next()?.chars().filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
+            let path = dir.join(&file);
+            if let Ok(b) = std::fs::read(&path) {
+                return Some((id, b));
+            }
+            let b = wave_catalog::marketplace::get_bytes(&url).ok()?;
+            let _ = std::fs::write(&path, &b);
+            Some((id, b))
+        })
+        .next()
 }
 
 /// Open a web page in the user's browser.
@@ -103,6 +179,23 @@ mod tests {
         assert_eq!(preset_name(r#"<Preset><Info Name="Warm &amp; Clear" Position="1"/><PARAM id="Band 1 Filter Type"/></Preset>"#).as_deref(), Some("Warm & Clear"));
         assert_eq!(preset_name("<Preset><Info Name='x'/></Preset>"), None, "no bands");
         assert_eq!(preset_name("<Foo/>"), None);
+    }
+
+    #[test]
+    fn matching() {
+        assert_eq!(file_version("Old_Radio-1.0.0_HdYjEzV").as_deref(), Some("1.0.0"));
+        assert_eq!(file_version("my-preset"), None);
+        let p = LocalPreset {
+            name: "Old Radio".into(),
+            path: "/d/Old_Radio-1.0.0_HdYjEzV.xml".into(),
+            version: Some("1.0.0".into()),
+            modified: std::time::UNIX_EPOCH,
+        };
+        assert!(p.is("Old Radio"));
+        assert!(p.is("old radio"));
+        assert!(!p.is("Old Radio 2"));
+        let q = LocalPreset { name: "Wave:3".into(), path: "/d/Wave_3-1.0.0_x.xml".into(), version: None, modified: std::time::UNIX_EPOCH };
+        assert!(q.is("Wave 3"));
     }
 
     #[test]

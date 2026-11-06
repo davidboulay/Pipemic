@@ -19,6 +19,11 @@ pub struct Addon {
     pub url: String,
     /// Variant names (e.g. "default", or "Windows" + "macOS").
     pub variants: Vec<String>,
+    /// Thumbnail image (PNG on the CDN).
+    pub thumbnail: Option<String>,
+    /// Latest version, e.g. "1.0.0" (from the product details; only fetched
+    /// for add-ons that run on Linux).
+    pub version: Option<String>,
 }
 
 impl Addon {
@@ -44,10 +49,44 @@ pub fn wave_link_addons() -> Result<Vec<Addon>, String> {
         out.extend(page);
         match next {
             Some(n) => url = n,
-            None => return Ok(out),
+            None => break,
         }
     }
+    // Versions, fetched in parallel. Best effort: an add-on without a
+    // version just can't show updates.
+    std::thread::scope(|sc| {
+        for a in out.iter_mut().filter(|a| a.runs_on_linux()) {
+            sc.spawn(move || a.version = get_string(&format!("{API}/products/{}", a.id)).ok().and_then(|b| latest_version(&b)));
+        }
+    });
     Ok(out)
+}
+
+fn get_string(url: &str) -> Result<String, String> {
+    ureq::get(url).call().map_err(|e| format!("marketplace: {e}"))?.body_mut().read_to_string().map_err(|e| format!("marketplace: {e}"))
+}
+
+/// Raw bytes of a public marketplace file (thumbnails), at most 4 MB.
+pub fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    if !url.starts_with("https://mp-cdn.elgato.com/") {
+        return Err(format!("not a marketplace file: {url}"));
+    }
+    ureq::get(url)
+        .call()
+        .map_err(|e| format!("marketplace: {e}"))?
+        .body_mut()
+        .with_config()
+        .limit(4 * 1024 * 1024)
+        .read_to_vec()
+        .map_err(|e| format!("marketplace: {e}"))
+}
+
+/// `latest_version_number` of a product's default (else first) variant.
+pub fn latest_version(details: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(details).ok()?;
+    let vars = v["variants"].as_array()?;
+    let pick = vars.iter().find(|x| x["is_default"] == true).or(vars.first())?;
+    pick["latest_version_number"].as_str().map(String::from)
 }
 
 /// One `/products` page: its add-ons and the next page's URL.
@@ -67,6 +106,8 @@ pub fn parse_page(body: &str) -> Result<(Vec<Addon>, Option<String>), String> {
                 summary: summary(p["description"].as_str().unwrap_or("")),
                 url: format!("{SITE}/product/{slug}"),
                 variants: p["variants"].as_array().into_iter().flatten().filter_map(|x| x["name"].as_str().map(String::from)).collect(),
+                thumbnail: p["thumbnail_cdn"].as_str().filter(|u| !u.is_empty()).map(String::from),
+                version: None,
             })
         })
         .collect();
@@ -104,5 +145,15 @@ mod tests {
         assert!(!a[1].runs_on_linux());
         assert_eq!(a[1].variants, ["Windows", "macOS"]);
         assert!(next.unwrap().ends_with("offset=1"));
+        assert_eq!(a[0].thumbnail, None);
+    }
+
+    #[test]
+    fn versions() {
+        let d = r#"{"variants":[{"name":"Windows","is_default":false,"latest_version_number":"1.0.1.100"},
+                                  {"name":"default","is_default":true,"latest_version_number":"1.0.2"}]}"#;
+        assert_eq!(latest_version(d).as_deref(), Some("1.0.2"));
+        assert_eq!(latest_version("{}"), None);
+        assert!(get_bytes("https://example.com/x.png").is_err());
     }
 }

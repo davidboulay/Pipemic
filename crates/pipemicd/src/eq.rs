@@ -126,8 +126,9 @@ impl Equalizer {
 
     /// Parse an Elgato Equalizer preset (a Wave Link marketplace "presets"
     /// add-on): `<Preset><Info Name=…/><Parameters><PARAM id="Band N Filter X" value=…/>`.
-    /// Bypassed bands are kept (off) so the band layout matches the original;
-    /// `Visible` is UI-only in the original and ignored.
+    /// Only bands that change the sound are kept: bypassed bands and 0 dB
+    /// peaks/shelves (the original's unused slots) are dropped. `Visible` is
+    /// UI-only in the original (an invisible band still filters) and ignored.
     pub fn from_elgato_xml(xml: &str) -> Result<Self> {
         if !xml.contains("<Preset") {
             bail!("not an Elgato EQ preset (no <Preset> element)");
@@ -171,10 +172,13 @@ impl Equalizer {
                 on: r[4].unwrap_or(0.0) < 0.5,
             };
             band.validate().with_context(|| format!("band {}", i + 1))?;
-            bands.push(band);
+            let flat = !matches!(band.kind, Kind::Highpass | Kind::Lowpass) && band.gain == 0.0;
+            if band.on && !flat {
+                bands.push(band);
+            }
         }
         if bands.is_empty() {
-            bail!("the preset has no EQ bands");
+            bail!("the preset has no EQ bands that change the sound");
         }
         Ok(Self { name, enabled: true, bands })
     }
@@ -263,12 +267,10 @@ mod tests {
     fn imports_old_radio() {
         let eq = Equalizer::from_elgato_xml(OLD_RADIO).unwrap();
         assert_eq!(eq.name, "Old Radio");
-        assert_eq!(eq.bands.len(), 4);
+        assert_eq!(eq.bands.len(), 3, "bypassed band 4 dropped");
         assert_eq!(eq.bands[0], Band { kind: Kind::Lowpass, freq: 1505.0, q: 0.71, gain: 0.0, on: true });
         assert_eq!(eq.bands[1].kind, Kind::Highpass);
         assert_eq!(eq.bands[2], Band { kind: Kind::Peak, freq: 2037.0, q: 3.1, gain: 12.04, on: true });
-        assert!(!eq.bands[3].on, "bypassed band stays, switched off");
-        assert_eq!(eq.bands[3].gain, -6.02);
         assert_eq!(eq.slot(3), IDENTITY);
         assert_eq!(eq.slot(7), IDENTITY);
     }

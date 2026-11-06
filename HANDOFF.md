@@ -126,4 +126,12 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   with "Get" opening the product page. Not yet tried by the user.
 - Dev aid: `PIPEMIC_VIEW=fx:<channel>`. To screenshot beside a running Pipemic, use a short private
   `XDG_RUNTIME_DIR` with a symlink to `pipemicd.sock` and an absolute `WAYLAND_DISPLAY` (single-instance socket).
+- Follow-up (user feedback 2026-11-06): no login/auto-download (Elgato has no third-party OAuth; posing as Wave
+  Link was declined). Instead "Get" remembers the channel and applies the preset as soon as its file lands in
+  Downloads (matched by name; 15 min window). Downloaded presets can be moved to the trash (`gio trash`, else
+  `kioclient`). Remove button dropped: the switch bypasses, picking another preset replaces. Marketplace thumbnails
+  (2:1 PNG, cached in `~/.cache/pipemic/addons/`). Catalogue refetched hourly and when the sheet opens after 30 min;
+  version from the file name (`Name-1.0.0_xxx.xml`) vs `latest_version_number` shows "Update".
+  Import now keeps only bands that change the sound (bypassed and 0 dB peak/shelf slots dropped).
+- Not yet verified end to end: the auto-apply after a real browser download (needs the user's login).
 - Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.

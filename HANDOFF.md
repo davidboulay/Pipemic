@@ -160,3 +160,15 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   (A harmless "WebKit internal error" line is printed when the hidden window exits mid-load.)
 - Not yet verified: Get for a preset not yet in the user's library (expected: falls back to the product page).
 - Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.
+
+## Free add-ons and Quit (2026-11-06, Linux)
+- Free marketplace add-ons not in the user's library: Get now adds them (POST `/api/proxy/orders`
+  `{"items":[{"variant_id","plan":"once"}]}`, the website's "Get now"), after checking `/allitems` says free,
+  no licence, zero price. Verified: RE20 order `succeeded`, then `purchase-link` 200. The order takes >6 s to
+  reach the library, so the download is retried for up to 45 s. Not yet verified end-to-end on a second item.
+- Waiting-for-download state has a Cancel button.
+- pipemicd now runs only while the app does: the app starts it, tray Quit stops it. Login starts the app in the
+  tray (autostart `--background`); the unit is no longer enabled. Verified: stopping pipemicd removes every
+  `pipemic.*` node, Spotify falls back to the default sink, the Wave:3 stays default source; start restores routes.
+- Mic gain was found at 6.5 dB (was ~38). The ALSA "Mic Capture Volume" (0–80 = 0–40 dB) *is* the hardware gain,
+  so app AGC or a volume slider on the Wave:3 source changes it. Open: lock it.

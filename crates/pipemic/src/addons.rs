@@ -281,6 +281,30 @@ pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog:
             session_expired();
         }
     }
+    // Not in the library yet: if it's free, add it (the website's "Get now"), then download.
+    if matches!(result, Err(InstallError::NotOwned)) {
+        match wave_catalog::marketplace::claim_free(&mut session, variant) {
+            Ok(changed) => {
+                if changed {
+                    let _ = save_session(&session);
+                }
+                // The order takes a while to land in the library (seen: >6 s).
+                let start = std::time::Instant::now();
+                loop {
+                    result = download_variant(&mut session, variant);
+                    if !matches!(result, Err(InstallError::NotOwned)) || start.elapsed().as_secs() >= 45 {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                // It is in the library now; never send the user to the website for it.
+                if matches!(result, Err(InstallError::NotOwned)) {
+                    result = Err(InstallError::Other("Added to your Elgato library, but the file isn't ready yet. Press Get again in a minute.".into()));
+                }
+            }
+            Err(e) => result = Err(e),
+        }
+    }
     if let Ok((_, true)) = &result {
         let _ = save_session(&session);
     }

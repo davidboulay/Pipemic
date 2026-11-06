@@ -197,6 +197,60 @@ pub fn download_variant(session: &mut Session, variant: &str) -> Result<(Downloa
     Ok((Download { product_name: v["product_name"].as_str().unwrap_or("").to_string(), version, file_name, bytes }, changed))
 }
 
+/// Is variant `variant` free (no price, no licence)? Asks the public catalogue.
+pub fn variant_is_free(variant: &str) -> Result<bool, String> {
+    let body = get_string(&format!("{API}/allitems?ids={variant}"))?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| "marketplace reply is not JSON".to_string())?;
+    Ok(v.as_array().and_then(|a| a.iter().find(|x| x["variant_id"] == variant)).is_some_and(is_free_item))
+}
+
+/// Free only when every sign agrees: flagged free, no licence, zero price.
+fn is_free_item(x: &serde_json::Value) -> bool {
+    let zero = |p: &serde_json::Value| p["unit_amount"].as_u64() == Some(0);
+    x["is_free"] == true
+        && x["needs_license"] == false
+        && x["price"].is_object()
+        && zero(&x["price"])
+        && x["prices"].as_array().is_none_or(|ps| ps.iter().all(zero))
+}
+
+/// Add free variant `variant` to the user's library, the way the website's
+/// "Get now" button does (a zero-amount order). Refuses anything not free.
+/// Returns whether the session's cookies changed.
+pub fn claim_free(session: &mut Session, variant: &str) -> Result<bool, InstallError> {
+    if variant.is_empty() || !variant.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(InstallError::Other(format!("bad add-on id {variant:?}")));
+    }
+    if !variant_is_free(variant).map_err(InstallError::Other)? {
+        return Err(InstallError::NotOwned);
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let body = serde_json::json!({"items": [{"variant_id": variant, "plan": "once"}]}).to_string();
+    let mut resp = agent
+        .post(&format!("{SITE}/api/proxy/orders"))
+        .header("Cookie", &session.header())
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .send(body.as_bytes())
+        .map_err(|e| InstallError::Other(format!("marketplace: {e}")))?;
+    let set: Vec<String> = resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+    let changed = session.update(&set);
+    let status = resp.status().as_u16();
+    let reply = resp.body_mut().read_to_string().unwrap_or_default();
+    match status {
+        200..=299 => {}
+        401 | 403 => return Err(InstallError::SignIn),
+        s => return Err(InstallError::Other(format!("couldn't add it to your Elgato library (marketplace answered {s})"))),
+    }
+    let v: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
+    match v["status"].as_str() {
+        Some("failed" | "canceled" | "requires_payment_method" | "requires_action") => {
+            Err(InstallError::Other("Elgato didn't add it to your library; get it on the website".into()))
+        }
+        _ => Ok(changed),
+    }
+}
+
 /// "Retro's%20Cinema%20EQ-1.xml" -> "Retro's Cinema EQ-1.xml".
 pub fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
@@ -281,6 +335,30 @@ mod tests {
       {"id":"abc","name":"Old Radio","org_name":"Elgato","extension":"presets","slug":"old-radio-abc",
        "description":"**Old Radio** gives your voice a\r\nvintage tone.\r\n\r\nMore text.","variants":[{"name":"default","id":"v1"}]},
       {"id":"def","name":"Some FX","org_name":"X","extension":"vst","slug":"some-fx-def","description":"","variants":[{"name":"Windows"},{"name":"macOS"}]}]}"#;
+
+    #[test]
+    fn free_check() {
+        let free: serde_json::Value = serde_json::from_str(
+            r#"{"variant_id":"v1","is_free":true,"needs_license":false,"prices":null,"price":{"unit_amount":0,"currency":"","plan":""}}"#,
+        )
+        .unwrap();
+        assert!(is_free_item(&free));
+        let mut paid = free.clone();
+        paid["price"]["unit_amount"] = 1499.into();
+        assert!(!is_free_item(&paid));
+        let mut flagged = free.clone();
+        flagged["is_free"] = false.into();
+        assert!(!is_free_item(&flagged));
+        let mut licence = free.clone();
+        licence["needs_license"] = true.into();
+        assert!(!is_free_item(&licence));
+        let mut priced = free.clone();
+        priced["prices"] = serde_json::json!([{"unit_amount": 999, "plan": "once"}]);
+        assert!(!is_free_item(&priced));
+        let mut no_price = free;
+        no_price["price"] = serde_json::Value::Null;
+        assert!(!is_free_item(&no_price));
+    }
 
     #[test]
     fn parses_page() {

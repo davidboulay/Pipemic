@@ -35,8 +35,19 @@ if [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/wavelink.desktop" ]; then
   sed -i 's/wavelink/pipemic/g; s/Wave Link/Pipemic/g' "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/pipemic.desktop"
 fi
 systemctl --user daemon-reload
-systemctl --user enable pipemicd.service >/dev/null 2>&1 || true
-systemctl --user restart pipemicd.service
+# pipemicd runs while the Pipemic app does: the app starts it and Quit stops
+# it. Login starts the app in the tray ("Open at login"), not the bare daemon.
+autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/pipemic.desktop"
+if systemctl --user is-enabled pipemicd.service >/dev/null 2>&1; then
+  systemctl --user disable pipemicd.service >/dev/null 2>&1 || true
+  if [ ! -e "$autostart" ]; then
+    mkdir -p "$(dirname "$autostart")"
+    printf '[Desktop Entry]\nType=Application\nName=Pipemic\nExec=pipemic --background\nIcon=pipemic\nX-GNOME-Autostart-enabled=true\n' > "$autostart"
+  fi
+fi
+if systemctl --user is-active pipemicd.service >/dev/null 2>&1 || pgrep -x pipemic >/dev/null; then
+  systemctl --user restart pipemicd.service
+fi
 # A window left open would keep running the old build: restart it.
 if pgrep -x pipemic >/dev/null; then
   pkill -x pipemic

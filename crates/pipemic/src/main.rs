@@ -31,6 +31,8 @@ fn main() -> iced::Result {
     if !tray::claim_single_instance(link_arg().as_deref()) {
         return Ok(());
     }
+    // The mixer runs while Pipemic does: start it (Quit stops it).
+    daemon_service("start");
     // A daemon, not a single-window app: closing the window leaves Pipemic
     // in the tray; the tray (or launching it again) reopens the window.
     iced::daemon(App::new, App::update, App::view)
@@ -38,6 +40,13 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(theme())
         .run()
+}
+
+/// `systemctl --user <action> pipemicd.service`, waiting for it to finish.
+/// Stopping pipemicd removes its devices and sends apps back to the
+/// default speakers and mic; starting it brings the saved setup back.
+fn daemon_service(action: &str) {
+    let _ = std::process::Command::new("systemctl").args(["--user", action, "pipemicd.service"]).status();
 }
 
 /// A marketplace link passed on the command line (`pipemic %u`).
@@ -569,6 +578,8 @@ enum Message {
     /// Install an add-on (signed in), else open its page and apply its file
     /// once it's downloaded.
     Get { name: String, url: String, variant: Option<String> },
+    /// Stop waiting for an add-on to arrive in Downloads.
+    CancelWait,
     /// A signed-in download finished; `channel` = apply it there.
     Installed {
         variant: String,
@@ -963,13 +974,18 @@ impl App {
                     let muted = self.mic["mute"] == true;
                     return self.update(Message::Mute(Target::MicGain, !muted));
                 }
-                tray::Event::Quit => return iced::exit(),
+                tray::Event::Quit => {
+                    // Quit means off: back to the plain default devices.
+                    daemon_service("stop");
+                    return iced::exit();
+                }
             },
             Message::WindowClosed(id) => {
                 if self.window == Some(id) {
                     self.window = None;
                     self.dragging.clear();
                     if self.tray.is_none() {
+                        daemon_service("stop");
                         return iced::exit(); // nowhere to come back from
                     }
                 }
@@ -1077,6 +1093,9 @@ impl App {
                     self.fx_error = Some(e);
                     self.pending = None;
                 }
+            }
+            Message::CancelWait => {
+                self.pending = None;
             }
             Message::DeleteLocal(name) => {
                 if let Err(e) = addons::trash_preset(&name) {
@@ -2187,7 +2206,13 @@ impl App {
                         let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
                         iced::widget::tooltip(
                             b,
-                            tooltip_box("Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()),
+                            tooltip_box(
+                                if self.signed_in {
+                                    "Adds it to your Elgato library if it's free, then installs it here.".into()
+                                } else {
+                                    "Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()
+                                },
+                            ),
                             iced::widget::tooltip::Position::Left,
                         )
                         .gap(6)
@@ -2195,7 +2220,13 @@ impl App {
                     };
                     let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
                     let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
-                        text("Waiting for the download…").size(11).color(ACCENT).into()
+                        row![
+                            text("Waiting for the download…").size(11).color(ACCENT),
+                            button(text("Cancel").size(12)).padding([5, 14]).style(soft_button).on_press(Message::CancelWait),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center)
+                        .into()
                     } else if update {
                         get("Update")
                     } else if in_use {

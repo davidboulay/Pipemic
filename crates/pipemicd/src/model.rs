@@ -423,10 +423,13 @@ impl Config {
     /// SPA-JSON args for libpipewire-module-loopback bridging device channel `c`.
     pub fn bridge_args(c: &Channel) -> String {
         let n = Self::bridge_node_name(c);
+        // Distinct node.group per side: otherwise both halves share one driver
+        // and the device still follows the output's clock (robot voice, seen
+        // 2026-11-06). Split, the loopback resamples between the two clocks.
         format!(
-            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ]
-  capture.props = {{ node.name = "{n}.in" node.autoconnect = false node.dont-reconnect = true }}
-  playback.props = {{ node.name = "{n}" node.autoconnect = false node.dont-reconnect = true }} }}"#,
+            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ] target.delay.sec = 0.02
+  capture.props = {{ node.name = "{n}.in" node.group = "{n}.device" node.link-group = "{n}.device" node.autoconnect = false node.dont-reconnect = true }}
+  playback.props = {{ node.name = "{n}" node.group = "{n}.mix" node.link-group = "{n}.mix" node.autoconnect = false node.dont-reconnect = true }} }}"#,
             label = c.label.replace('"', "")
         )
     }

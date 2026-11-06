@@ -62,11 +62,13 @@ cd pipemic
 sudo install -m644 udev/70-elgato-wave.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger -s usb
 
-# Build and install for your user (~/.local), and start the daemon
+# Build and install for your user (~/.local)
 ./packaging/install-user.sh
 ```
 
-Then open **Pipemic** from your app menu. To update, use *Preferences → Check
+Then open **Pipemic** from your app menu. The mixer runs while Pipemic does:
+closing the window keeps it in the tray, and *Quit* in the tray menu stops it and
+puts your apps back on the default speakers and mic. To update, use *Preferences → Check
 for updates*, or `git pull` and re-run the install script.
 
 ## How it works

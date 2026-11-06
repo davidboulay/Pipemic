@@ -28,7 +28,7 @@ use std::time::Duration;
 
 fn main() -> iced::Result {
     // Already running (window closed, icon in the tray)? Show that one.
-    if !tray::claim_single_instance() {
+    if !tray::claim_single_instance(link_arg().as_deref()) {
         return Ok(());
     }
     // A daemon, not a single-window app: closing the window leaves Pipemic
@@ -38,6 +38,11 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(theme())
         .run()
+}
+
+/// A marketplace link passed on the command line (`pipemic %u`).
+fn link_arg() -> Option<String> {
+    std::env::args().skip(1).find(|a| a.starts_with("wavelink://") || a.starts_with("wavelink-v2://"))
 }
 
 fn window_settings() -> iced::window::Settings {
@@ -563,11 +568,31 @@ enum Message {
     /// Open an add-on's page and apply its file once it's downloaded.
     Get { name: String, url: String },
     ThumbsDone(Vec<(String, Vec<u8>)>),
-    /// Move a downloaded preset file to the trash.
-    DeleteLocal(std::path::PathBuf),
+    /// Move every file of this preset (library and Downloads) to the trash.
+    DeleteLocal(String),
     RefreshAddons,
     ToastDone(u64),
     FileDropped(std::path::PathBuf),
+    /// "Open with Wave Link" on the marketplace site.
+    MarketLink(String),
+    /// Close the "add-on added" popup.
+    IncomingOk,
+}
+
+/// An add-on opened from the marketplace site: waiting for its file, then
+/// added to the preset library.
+#[derive(Debug, Clone)]
+struct Incoming {
+    /// Variant id from the link.
+    variant: String,
+    state: IncomingState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum IncomingState {
+    Waiting,
+    Added(String),
+    Failed(String),
 }
 
 /// An add-on the user went to download: applied to `channel` when its
@@ -628,6 +653,7 @@ struct App {
     pending: Option<Pending>,
     /// Short confirmation ("Old Radio added to Other") and its id.
     toast: Option<(u64, String)>,
+    incoming: Option<Incoming>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -680,6 +706,9 @@ impl App {
         let view = std::env::var("PIPEMIC_VIEW").unwrap_or_default();
         if view == "device-info" {
             tasks.push(Task::done(Message::CheckFirmware));
+        }
+        if let Some(l) = link_arg() {
+            tasks.push(Task::done(Message::MarketLink(l)));
         }
         if let Some(c) = view.strip_prefix("fx:") {
             tasks.push(Task::done(Message::ShowFx(Some(c.to_string()))));
@@ -790,7 +819,7 @@ impl App {
             Message::Tick => return Task::perform(send(json!({"cmd": "status"})), Message::Status),
             Message::AppsTick => {
                 let mut t = vec![self.apps_request()];
-                if self.fx.is_some() || self.pending.is_some() {
+                if self.fx.is_some() || self.pending.is_some() || self.waiting_link() {
                     t.push(Task::perform(blocking(addons::scan_downloads), Message::Downloads));
                 }
                 return Task::batch(t);
@@ -887,6 +916,7 @@ impl App {
             }
             Message::Tray(tray::Out::Event(e)) => match e {
                 tray::Event::Show => return self.show_window(),
+                tray::Event::Open(url) => return self.update(Message::MarketLink(url)),
                 tray::Event::ToggleMute => {
                     let muted = self.mic["mute"] == true;
                     return self.update(Message::Mute(Target::MicGain, !muted));
@@ -953,6 +983,7 @@ impl App {
                             t = Task::perform(blocking(move || addons::thumbnails(want)), Message::ThumbsDone);
                         }
                         self.addons = AddonList::Done(Ok(list));
+                        self.resolve_incoming();
                     }
                     // A failed refresh keeps the list we have.
                     Err(e) => {
@@ -970,12 +1001,13 @@ impl App {
             }
             Message::Downloads(d) => {
                 self.downloads = d;
+                self.resolve_incoming();
                 // The add-on the user went to get has arrived: apply it.
                 if let Some(p) = self.pending.clone() {
                     let fresh = self.downloads.iter().find(|l| l.is(&p.name) && l.modified + Duration::from_secs(5) >= p.since);
                     if let Some(l) = fresh {
                         self.pending = None;
-                        let (c, path) = (p.channel.clone(), l.path.clone());
+                        let (c, path) = (p.channel.clone(), addons::add_to_library(&l.path).unwrap_or_else(|_| l.path.clone()));
                         let msg = format!("{} added to {}", l.name, self.channel_label(&p.channel));
                         return Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path})), Message::EqDone)
                             .chain(self.toast(msg));
@@ -993,12 +1025,30 @@ impl App {
                     self.pending = None;
                 }
             }
-            Message::DeleteLocal(path) => {
-                if let Err(e) = addons::trash(&path) {
+            Message::DeleteLocal(name) => {
+                if let Err(e) = addons::trash_preset(&name) {
                     self.fx_error = Some(e);
                 }
                 return Task::perform(blocking(addons::scan_downloads), Message::Downloads);
             }
+            Message::MarketLink(url) => {
+                let show = self.show_window();
+                let Some(variant) = addons::preset_link(&url) else {
+                    self.incoming = Some(Incoming {
+                        variant: String::new(),
+                        state: IncomingState::Failed("This add-on is a plugin. Pipemic can use EQ presets only.".into()),
+                    });
+                    return show;
+                };
+                self.incoming = Some(Incoming { variant, state: IncomingState::Waiting });
+                self.fx = None;
+                let mut t = vec![show, Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
+                if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                    t.push(self.update(Message::RefreshAddons));
+                }
+                return Task::batch(t);
+            }
+            Message::IncomingOk => self.incoming = None,
             Message::ToastDone(id) => {
                 if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
                     self.toast = None;
@@ -1026,6 +1076,75 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Waiting for the file of an add-on opened from the marketplace?
+    fn waiting_link(&self) -> bool {
+        self.incoming.as_ref().is_some_and(|i| i.state == IncomingState::Waiting)
+    }
+
+    /// The marketplace add-on an incoming link points at.
+    fn incoming_addon(&self) -> Option<&wave_catalog::marketplace::Addon> {
+        let i = self.incoming.as_ref()?;
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.variant_ids.contains(&i.variant))
+    }
+
+    /// Its file is in Downloads (or the library): add it to the library.
+    fn resolve_incoming(&mut self) {
+        if !self.waiting_link() {
+            return;
+        }
+        let Some(name) = self.incoming_addon().map(|a| a.name.clone()) else { return };
+        let Some(local) = self.downloads.iter().find(|l| l.is(&name)).cloned() else { return };
+        let state = match addons::add_to_library(&local.path) {
+            Ok(_) => IncomingState::Added(local.name),
+            Err(e) => IncomingState::Failed(e),
+        };
+        if let Some(i) = &mut self.incoming {
+            i.state = state;
+        }
+    }
+
+    /// Popup for "Open with Wave Link": wait for the download, then say
+    /// it's added and where to use it.
+    fn incoming_view<'a>(&'a self, i: &'a Incoming) -> Element<'a, Message> {
+        let addon = self.incoming_addon();
+        let name = addon.map(|a| a.name.clone()).unwrap_or_else(|| "your preset".into());
+        let thumb: Element<'a, Message> = match addon.and_then(|a| self.thumbs.get(&a.id)) {
+            Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
+            None => Self::thumb_blank(64.0),
+        };
+        let (title, body, done): (String, String, bool) = match &i.state {
+            IncomingState::Waiting => (
+                format!("Getting {name}"),
+                "Click Download on the Elgato page. Pipemic picks the file up from your Downloads folder.".into(),
+                false,
+            ),
+            IncomingState::Added(n) => (
+                format!("{n} was added"),
+                "Now add it to a channel: click the effects button under a channel's apps, then Use.".into(),
+                true,
+            ),
+            IncomingState::Failed(e) => ("Couldn't add this add-on".into(), e.clone(), true),
+        };
+        let action = button(text(if done { "OK" } else { "Cancel" }).size(13).font(SEMIBOLD))
+            .padding([7, 18])
+            .style(if done { primary_button } else { soft_button })
+            .on_press(Message::IncomingOk);
+        let body = column![
+            row![thumb, column![text(title).size(18).font(SEMIBOLD), text(body).size(12).color(DIM)].spacing(6).width(Length::Fill)]
+                .spacing(16)
+                .align_y(Alignment::Center),
+            row![Space::new().width(Length::Fill), action],
+        ]
+        .spacing(20);
+        // Closes with its button only, so a stray click can't hide it.
+        opaque(
+            container(opaque(sheet(body.padding(24)).width(520)))
+                .center(Length::Fill)
+                .style(|_| container::background(rgba(0, 0, 0, 0.55))),
+        )
     }
 
     /// Show a short confirmation for a few seconds.
@@ -1812,15 +1931,14 @@ impl App {
                         .on_press(Message::EqImport(cid.to_string(), p.path.clone())),
                 )
             };
-            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.path.clone()));
-            line = line.push(iced::widget::tooltip(del, tooltip_box("Move this preset file to the trash".into()), iced::widget::tooltip::Position::Left).gap(6));
+            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.name.clone()));
+            line = line.push(iced::widget::tooltip(del, tooltip_box("Move this preset's files to the trash".into()), iced::widget::tooltip::Position::Left).gap(6));
             local = local.push(container(line).padding([6, 10]));
         }
-        let downloads_dir = addons::downloads_dir();
         let local_hint = if self.downloads.is_empty() {
-            format!("No EQ presets in {} yet. Get one below: it's applied here as soon as it's downloaded.", downloads_dir.display())
+            "No presets yet. Get one below: it's applied here as soon as it's downloaded.".to_string()
         } else {
-            format!("Found in {}. You can also drop a preset file on this window.", downloads_dir.display())
+            format!("Added presets, and EQ presets found in {}. You can also drop a preset file on this window.", addons::downloads_dir().display())
         };
 
         // Marketplace.
@@ -1873,7 +1991,7 @@ impl App {
             }
         };
 
-        let mut list = column![heading("EQUALIZER"), eq_group, heading("DOWNLOADED PRESETS"), text(local_hint).size(11).color(DIM)].spacing(8);
+        let mut list = column![heading("EQUALIZER"), eq_group, heading("YOUR PRESETS"), text(local_hint).size(11).color(DIM)].spacing(8);
         if !self.downloads.is_empty() {
             list = list.push(group(local));
         }
@@ -2102,7 +2220,9 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_| container::background(BG));
-        if self.show_settings {
+        if let Some(i) = &self.incoming {
+            stack![main, self.incoming_view(i)].into()
+        } else if self.show_settings {
             stack![main, self.settings_view()].into()
         } else if let Some(cid) = self.fx.as_deref() {
             stack![main, self.fx_sheet(cid)].into()

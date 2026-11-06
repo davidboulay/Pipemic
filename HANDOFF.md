@@ -133,5 +133,14 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   (2:1 PNG, cached in `~/.cache/pipemic/addons/`). Catalogue refetched hourly and when the sheet opens after 30 min;
   version from the file name (`Name-1.0.0_xxx.xml`) vs `latest_version_number` shows "Update".
   Import now keeps only bands that change the sound (bypassed and 0 dB peak/shelf slots dropped).
+- "Open with Wave Link" on the marketplace sends `wavelink://presets/install/<variant id>` (captured 2026-11-06;
+  no token, the file still needs the logged-in Download button). Pipemic now handles `wavelink://` and
+  `wavelink-v2://` (`Exec=pipemic %u`, `xdg-mime default` in install-user.sh; a running instance gets
+  `open <url>` on its single-instance socket). It shows a popup: "Getting <name>… click Download", then
+  "<name> was added", closed only by OK. Added presets are copied to `~/.local/share/pipemic/presets/`
+  (the library, listed first under YOUR PRESETS); Delete trashes every copy (library + Downloads).
+  Plugin links (`vst/...`) get "Pipemic can use EQ presets only".
+- Probing Elgato's gateway for an unauthenticated download URL was stopped (treated as getting around their
+  login). Don't retry; downloads stay with the user's browser.
 - Not yet verified end to end: the auto-apply after a real browser download (needs the user's login).
 - Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.

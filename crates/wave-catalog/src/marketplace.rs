@@ -19,6 +19,8 @@ pub struct Addon {
     pub url: String,
     /// Variant names (e.g. "default", or "Windows" + "macOS").
     pub variants: Vec<String>,
+    /// Variant ids (what `wavelink://presets/install/<id>` links carry).
+    pub variant_ids: Vec<String>,
     /// Thumbnail image (PNG on the CDN).
     pub thumbnail: Option<String>,
     /// Latest version, e.g. "1.0.0" (from the product details; only fetched
@@ -106,6 +108,7 @@ pub fn parse_page(body: &str) -> Result<(Vec<Addon>, Option<String>), String> {
                 summary: summary(p["description"].as_str().unwrap_or("")),
                 url: format!("{SITE}/product/{slug}"),
                 variants: p["variants"].as_array().into_iter().flatten().filter_map(|x| x["name"].as_str().map(String::from)).collect(),
+                variant_ids: p["variants"].as_array().into_iter().flatten().filter_map(|x| x["id"].as_str().map(String::from)).collect(),
                 thumbnail: p["thumbnail_cdn"].as_str().filter(|u| !u.is_empty()).map(String::from),
                 version: None,
             })
@@ -132,7 +135,7 @@ mod tests {
 
     const PAGE: &str = r#"{"count":2,"next":"https://mp-gateway.elgato.com/products?application=wave-link&limit=1&offset=1","results":[
       {"id":"abc","name":"Old Radio","org_name":"Elgato","extension":"presets","slug":"old-radio-abc",
-       "description":"**Old Radio** gives your voice a\r\nvintage tone.\r\n\r\nMore text.","variants":[{"name":"default"}]},
+       "description":"**Old Radio** gives your voice a\r\nvintage tone.\r\n\r\nMore text.","variants":[{"name":"default","id":"v1"}]},
       {"id":"def","name":"Some FX","org_name":"X","extension":"vst","slug":"some-fx-def","description":"","variants":[{"name":"Windows"},{"name":"macOS"}]}]}"#;
 
     #[test]
@@ -146,6 +149,7 @@ mod tests {
         assert_eq!(a[1].variants, ["Windows", "macOS"]);
         assert!(next.unwrap().ends_with("offset=1"));
         assert_eq!(a[0].thumbnail, None);
+        assert_eq!(a[0].variant_ids, ["v1"]);
     }
 
     #[test]

@@ -19,6 +19,8 @@ fi
 mkdir -p "$share/pipemic" && pwd > "$share/pipemic/source"   # for the in-app update check
 install -Dm644 systemd/pipemicd.service -t "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 update-desktop-database "$share/applications" 2>/dev/null || true
+# Marketplace "Open with Wave Link" links open Pipemic (no Wave Link on Linux).
+xdg-mime default pipemic.desktop x-scheme-handler/wavelink x-scheme-handler/wavelink-v2 >/dev/null 2>&1 || true
 gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
 # Remove the install from before the rename (wavelink / wavelinkd / wavectl).

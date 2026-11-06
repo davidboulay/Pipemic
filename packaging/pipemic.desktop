@@ -3,9 +3,11 @@ Type=Application
 Name=Pipemic
 GenericName=Audio Mixer
 Comment=Audio mixer and mic control for the Elgato Wave:3
-Exec=pipemic
+Exec=pipemic %u
 Icon=pipemic
 Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=elgato;wave;wave:3;wave link;mixer;microphone;mic;stream;pipewire;
 StartupWMClass=pipemic
+# "Open with Wave Link" on the Elgato marketplace sends these links.
+MimeType=x-scheme-handler/wavelink;x-scheme-handler/wavelink-v2;

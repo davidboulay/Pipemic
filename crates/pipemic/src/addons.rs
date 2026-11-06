@@ -67,25 +67,63 @@ pub fn preset_name(xml: &str) -> Option<String> {
     Some(name.replace("&amp;", "&").replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">"))
 }
 
-/// EQ presets in the Downloads folder and its direct subfolders, newest
-/// first, one per name.
-pub fn scan_downloads() -> Vec<LocalPreset> {
-    let root = downloads_dir();
-    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
-    fn walk(dir: &Path, depth: u8, files: &mut Vec<(std::time::SystemTime, PathBuf)>) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            let Ok(md) = e.metadata() else { continue };
-            if md.is_dir() && depth == 0 {
-                walk(&p, 1, files);
-            } else if md.is_file() && md.len() < 256 * 1024 && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) {
-                files.push((md.modified().unwrap_or(std::time::UNIX_EPOCH), p));
-            }
-        }
+/// Pipemic's preset library: presets added from the marketplace.
+pub fn library_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")).join("pipemic/presets")
+}
+
+/// Copy a preset file into the library (same file name); returns the copy.
+pub fn add_to_library(path: &Path) -> Result<PathBuf, String> {
+    let dir = library_dir();
+    if path.starts_with(&dir) {
+        return Ok(path.to_path_buf());
     }
-    walk(&root, 0, &mut files);
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let dst = dir.join(path.file_name().ok_or("not a file")?);
+    std::fs::copy(path, &dst).map_err(|e| format!("copying {}: {e}", path.display()))?;
+    Ok(dst)
+}
+
+/// Variant id from a marketplace preset link
+/// (`wavelink://presets/install/<variant id>`); None for other add-ons.
+pub fn preset_link(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let id = rest.strip_prefix("presets/install/")?.trim_end_matches('/');
+    let id = id.split(['?', '#', '/']).next()?;
+    (id.len() >= 8 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')).then(|| id.to_string())
+}
+
+/// Every preset file (library, then Downloads) with this preset name.
+fn files_named(name: &str) -> Vec<PathBuf> {
+    all_files().into_iter().filter(|(_, p)| std::fs::read_to_string(p).ok().as_deref().and_then(preset_name).as_deref() == Some(name)).map(|(_, p)| p).collect()
+}
+
+/// Move all files of preset `name` to the trash.
+pub fn trash_preset(name: &str) -> Result<(), String> {
+    for p in files_named(name) {
+        trash(&p)?;
+    }
+    Ok(())
+}
+
+/// Candidate preset files: the library first, then Downloads (and its
+/// direct subfolders), each newest first.
+fn all_files() -> Vec<(std::time::SystemTime, PathBuf)> {
+    let mut lib = Vec::new();
+    walk(&library_dir(), 1, &mut lib);
+    lib.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut dl = Vec::new();
+    walk(&downloads_dir(), 0, &mut dl);
+    dl.sort_by(|a, b| b.0.cmp(&a.0));
+    lib.extend(dl);
+    lib
+}
+
+/// EQ presets in the library and the Downloads folder, one per name (the
+/// library copy wins).
+pub fn scan_downloads() -> Vec<LocalPreset> {
+    let files = all_files();
     let mut out: Vec<LocalPreset> = Vec::new();
     for (modified, path) in files {
         let Some(name) = std::fs::read_to_string(&path).ok().as_deref().and_then(preset_name) else { continue };
@@ -95,6 +133,19 @@ pub fn scan_downloads() -> Vec<LocalPreset> {
         }
     }
     out
+}
+
+fn walk(dir: &Path, depth: u8, files: &mut Vec<(std::time::SystemTime, PathBuf)>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        let Ok(md) = e.metadata() else { continue };
+        if md.is_dir() && depth == 0 {
+            walk(&p, 1, files);
+        } else if md.is_file() && md.len() < 256 * 1024 && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml")) {
+            files.push((md.modified().unwrap_or(std::time::UNIX_EPOCH), p));
+        }
+    }
 }
 
 /// Move a file to the trash (freedesktop trash via `gio`, else KDE's
@@ -196,6 +247,14 @@ mod tests {
         assert!(!p.is("Old Radio 2"));
         let q = LocalPreset { name: "Wave:3".into(), path: "/d/Wave_3-1.0.0_x.xml".into(), version: None, modified: std::time::UNIX_EPOCH };
         assert!(q.is("Wave 3"));
+    }
+
+    #[test]
+    fn links() {
+        assert_eq!(preset_link("wavelink://presets/install/e1085e92-1a5d-4ec5-a978-516a12de16c2").as_deref(), Some("e1085e92-1a5d-4ec5-a978-516a12de16c2"));
+        assert_eq!(preset_link("wavelink-v2://presets/install/e1085e92-1a5d/?x=1").as_deref(), Some("e1085e92-1a5d"));
+        assert_eq!(preset_link("wavelink://vst/install/e1085e92-1a5d"), None);
+        assert_eq!(preset_link("wavelink://presets/install/../../etc"), None);
     }
 
     #[test]

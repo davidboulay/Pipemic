@@ -27,15 +27,23 @@ workflow to Linux:
   Elgato's catalog. Installing an update still needs Wave Link on Mac or Windows.
 - **Live meters** for every channel and both mixes, a per-channel fader link,
   and an output picker for your headphones or speakers.
+- **Effects per channel:** Elgato's EQ presets from the marketplace. Sign in
+  with your Elgato account and free presets install in one click; presets you
+  download yourself are picked up from your Downloads folder.
+- **Updates and tray:** Pipemic checks for new versions and updates itself.
+  Closing the window keeps it mixing in the tray; *Quit* stops it and your
+  apps go back to the default speakers and mic.
 
 ## Screenshots
 
 | | |
 |---|---|
-| ![Mixer with the mic muted](docs/screenshots/mixer-muted.png) | ![Wave:3 input and monitoring settings](docs/screenshots/mic-settings.png) |
-| Mic muted: the channel, the mic art and the button all follow the mic. | Gain, low cut, Clipguard, headphone volume, monitor mix and the knob mode. |
-| ![Wave:3 device info](docs/screenshots/device-info.png) | |
-| Device info: firmware, hardware and bootloader versions. | |
+| ![Wave:3 input and monitoring settings](docs/screenshots/mic-settings.png) | ![Wave:3 device info](docs/screenshots/device-info.png) |
+| Gain, low cut, Clipguard, headphone volume, monitor mix and the knob mode. Muted, the channel, the mic art and the button all turn red. | Device info: firmware (checked against Elgato's catalog), hardware and bootloader versions. |
+| ![Effects on a channel](docs/screenshots/effects.png) | ![Apps in a channel](docs/screenshots/apps.png) |
+| Effects: the channel's EQ, your presets, and Elgato's marketplace presets. | Apps in a channel: automatic ones can be switched off, any app can be moved in. |
+| ![Preferences](docs/screenshots/preferences.png) | ![Preferences with an update](docs/screenshots/preferences-update.png) |
+| Preferences: updates, open at login, output fallback. | When an update is available, one click installs it. |
 
 ## Supported hardware
 

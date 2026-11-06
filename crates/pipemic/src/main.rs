@@ -596,6 +596,8 @@ enum Message {
     DeleteLocal(String),
     RefreshAddons,
     ToastDone(u64),
+    /// The "Added" mark next to a just-installed add-on has been shown long enough.
+    AddedDone(u64),
     FileDropped(std::path::PathBuf),
     /// "Open with Wave Link" on the marketplace site.
     MarketLink(String),
@@ -683,6 +685,11 @@ struct App {
     /// Add-on id -> thumbnail.
     thumbs: HashMap<String, image::Handle>,
     pending: Option<Pending>,
+    /// Marketplace add-on being added and downloaded (its row shows "Installing…").
+    installing: Option<String>,
+    /// Add-on just installed: its row stays in the marketplace list for a few
+    /// seconds marked "Added", next to where the user pressed Get.
+    just_added: Option<(u64, String)>,
     /// Short confirmation ("Old Radio added to Other") and its id.
     toast: Option<(u64, String)>,
     incoming: Option<Incoming>,
@@ -1078,7 +1085,7 @@ impl App {
                 if let (true, Some(v)) = (self.signed_in, variant) {
                     let channel = self.fx.clone();
                     self.fx_error = None;
-                    self.toast_now(format!("Installing {name}…"));
+                    self.installing = Some(name);
                     return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
                         variant: String::new(),
                         channel: channel.clone(),
@@ -1154,6 +1161,9 @@ impl App {
             }
             Message::Installed { variant, channel, url, result } => {
                 use wave_catalog::marketplace::InstallError;
+                if variant.is_empty() && result.is_err() {
+                    self.installing = None;
+                }
                 let rescan = Task::perform(blocking(addons::scan_downloads), Message::Downloads);
                 let from_link = !variant.is_empty();
                 // The website no longer accepted the session (even renewed).
@@ -1171,12 +1181,14 @@ impl App {
                         return rescan;
                     }
                     (false, Ok((name, path))) => {
-                        self.toast = None;
+                        let row = self.installing.take().unwrap_or_else(|| name.clone());
                         let Some(c) = channel else { return rescan };
-                        let msg = format!("{name} added to {}", self.channel_label(&c));
+                        let id = self.just_added.as_ref().map_or(0, |(i, _)| i + 1);
+                        self.just_added = Some((id, row));
                         return Task::batch([
                             rescan,
-                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone).chain(self.toast(msg)),
+                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone),
+                            Task::perform(tokio_sleep(4000), move |_| Message::AddedDone(id)),
                         ]);
                     }
                     (false, Err(InstallError::Other(e))) => {
@@ -1230,6 +1242,11 @@ impl App {
                 self.signed_in = false;
             }
             Message::Focus(f) => self.focused = f,
+            Message::AddedDone(id) => {
+                if self.just_added.as_ref().is_some_and(|(i, _)| *i == id) {
+                    self.just_added = None;
+                }
+            }
             Message::ToastDone(id) => {
                 if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
                     self.toast = None;
@@ -2198,7 +2215,8 @@ impl App {
                     let local = self.downloads.iter().find(|l| l.is(&a.name));
                     let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
                     // Installed ones live in the section above; they stay here only to offer an update.
-                    if local.is_some() && !update && waiting.as_deref() != Some(a.name.as_str()) {
+                    let added = self.just_added.as_ref().is_some_and(|(_, n)| *n == a.name);
+                    if local.is_some() && !update && !added && waiting.as_deref() != Some(a.name.as_str()) {
                         continue;
                     }
                     shown += 1;
@@ -2225,7 +2243,11 @@ impl App {
                         .into()
                     };
                     let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
-                    let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
+                    let action: Element<'a, Message> = if added {
+                        text(format!("Added to {label}")).size(12).font(SEMIBOLD).color(ON).into()
+                    } else if self.installing.as_deref() == Some(a.name.as_str()) {
+                        text("Installing…").size(12).color(ACCENT).into()
+                    } else if waiting.as_deref() == Some(a.name.as_str()) {
                         row![
                             text("Waiting for the download…").size(11).color(ACCENT),
                             button(text("Cancel").size(12)).padding([5, 14]).style(soft_button).on_press(Message::CancelWait),

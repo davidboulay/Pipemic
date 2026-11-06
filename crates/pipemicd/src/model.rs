@@ -426,10 +426,17 @@ impl Config {
         // Distinct node.group per side: otherwise both halves share one driver
         // and the device still follows the output's clock (robot voice, seen
         // 2026-11-06). Split, the loopback resamples between the two clocks.
+        // The mix side asks for a normal 1024 quantum: left to the loopback's
+        // own small latency it pulled the whole mix graph down to 256, which a
+        // Bluetooth output can't keep up with (constant xruns, crackling).
+        // The device side runs at the same 1024: with 512 in and 1024 out
+        // the loopback's rate correction wobbled (warped voice, 2026-11-06).
+        // The delay buffer must outlast one cycle (1024 = 21 ms): at 0.02 s
+        // it ran dry every cycle (robot voice). 0.05 s leaves margin.
         format!(
-            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ] target.delay.sec = 0.02
-  capture.props = {{ node.name = "{n}.in" node.group = "{n}.device" node.link-group = "{n}.device" node.autoconnect = false node.dont-reconnect = true }}
-  playback.props = {{ node.name = "{n}" node.group = "{n}.mix" node.link-group = "{n}.mix" node.autoconnect = false node.dont-reconnect = true }} }}"#,
+            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ] target.delay.sec = 0.05
+  capture.props = {{ node.name = "{n}.in" node.group = "{n}.device" node.link-group = "{n}.device" node.latency = "1024/48000" node.autoconnect = false node.dont-reconnect = true }}
+  playback.props = {{ node.name = "{n}" node.group = "{n}.mix" node.link-group = "{n}.mix" node.latency = "1024/48000" node.autoconnect = false node.dont-reconnect = true }} }}"#,
             label = c.label.replace('"', "")
         )
     }

@@ -200,3 +200,9 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   order before the context. Verified: 0 crashes in 11 stops; Spotify back on the default output after stop.
 - Open: one mid-run crash at 18:35 (SIGSEGV in libspa-filter-graph from the builtin plugin, main loop idle, no
   log). No debug symbols for PipeWire 1.6.10 on the Arch/CachyOS debuginfod servers. Watch `coredumpctl list pipemicd`.
+- Bluetooth crackle (2026-11-06): with AirPods as output the mixes xrun'd constantly (~180/s on the mic path).
+  The bridge's loopback asked for a small latency (320), pulling the whole mix graph to quantum 256, too short
+  for Bluetooth (W/Q 1.00). Fix: both bridge halves `node.latency = 1024/48000`, `target.delay.sec = 0.05`.
+  Steps tried on the way: mix side 1024 + delay 0.02 = robot voice (buffer ran dry each cycle); mix 1024 +
+  device 512 + delay 0.05 = warped voice (rate correction wobble). Verified by ear on the CalDigit and on AirPods;
+  pw-top 0 errors over 20 s on AirPods. Mic path latency is now ~70 ms (was ~25 ms).

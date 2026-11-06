@@ -89,14 +89,53 @@ const POLL: Duration = Duration::from_millis(200);
 const RETRY: Duration = Duration::from_secs(2);
 const MUTE_SYNC: Duration = Duration::from_secs(1);
 /// PipeWire node name prefix of the Wave:3 capture source.
-const SOURCE_PREFIX: &str = "alsa_input.usb-Elgato_Systems_Elgato_Wave_3";
+pub const SOURCE_PREFIX: &str = "alsa_input.usb-Elgato_Systems_Elgato_Wave_3";
+/// PipeWire device (card) name fragment of the Wave:3.
+pub const CARD_MATCH: &str = "Elgato_Systems_Elgato_Wave_3";
+/// How long the source must have had its ports before we touch it.
+const SETTLE: Duration = Duration::from_secs(3);
+
+/// The Wave:3 as PipeWire shows it, kept current by the daemon's registry
+/// listener (links.rs). The mic thread reads it instead of polling `pactl`:
+/// short-lived clients connecting while WirePlumber sets up a device can make
+/// it drop that device's setup, leaving the mic without ports (seen
+/// 2026-11-06: ~1 WirePlumber restart in 4 with a `pactl` call every second,
+/// 0 in 12 without).
+#[derive(Default, Debug)]
+pub struct WaveView {
+    /// Card (device.name, which pactl also uses), when present.
+    pub card: Option<String>,
+    pub source: Option<WaveSource>,
+}
+
+#[derive(Debug)]
+pub struct WaveSource {
+    pub name: String,
+    /// When its first port appeared: WirePlumber has finished setting it up.
+    pub ready: Option<Instant>,
+    /// PipeWire mute (node Props).
+    pub mute: Option<bool>,
+}
+
+pub type SharedView = Arc<Mutex<WaveView>>;
+
+impl WaveView {
+    /// Source name and PipeWire mute, once the source has settled.
+    fn settled(&self) -> Option<(String, bool)> {
+        let s = self.source.as_ref()?;
+        if s.ready?.elapsed() < SETTLE {
+            return None;
+        }
+        Some((s.name.clone(), s.mute?))
+    }
+}
 
 impl Mic {
-    pub fn start() -> Self {
+    pub fn start(view: SharedView) -> Self {
         let state = Arc::new(Mutex::new(MicState::default()));
         let (tx, rx) = mpsc::channel::<Job>();
         let st = state.clone();
-        std::thread::spawn(move || run(st, rx));
+        std::thread::spawn(move || run(st, rx, view));
         Self { state, tx }
     }
 
@@ -115,7 +154,7 @@ impl Mic {
     }
 }
 
-fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
+fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>, view: SharedView) {
     let mut dev: Option<Wave3> = None;
     let mut last_try = Instant::now() - RETRY;
     let mut sync = MuteSync::default();
@@ -135,7 +174,8 @@ fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
                     s.info = version.as_ref().map(MicInfo::from);
                 }
                 dev = Some(d);
-                std::thread::spawn(ensure_mic_input);
+                let view = view.clone();
+                std::thread::spawn(move || ensure_mic_input(&view));
             }
         }
 
@@ -159,7 +199,7 @@ fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
         }
         if last_sync.elapsed() >= MUTE_SYNC {
             last_sync = Instant::now();
-            sync.tick(&mut dev, &state);
+            sync.tick(&mut dev, &state, &view);
         }
     }
 }
@@ -195,7 +235,7 @@ fn mute_action(last: Option<bool>, hw: bool, pw: bool) -> MuteAction {
 }
 
 impl MuteSync {
-    fn tick(&mut self, dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
+    fn tick(&mut self, dev: &mut Option<Wave3>, state: &Mutex<MicState>, view: &Mutex<WaveView>) {
         let hw = match state.lock() {
             Ok(s) if s.connected => s.mute,
             _ => {
@@ -203,17 +243,26 @@ impl MuteSync {
                 return;
             }
         };
-        let Some(name) = wave3_source() else {
+        let Some((name, pw)) = view.lock().ok().and_then(|v| v.settled()) else {
             self.last = None;
             return;
         };
-        let Some(pw) = source_mute(&name) else { return };
         let last = self.last.as_ref().filter(|(n, _)| *n == name).map(|(_, m)| *m);
         let result = match mute_action(last, hw, pw) {
             MuteAction::None => Some(hw),
             MuteAction::SetPipeWire(m) => {
                 eprintln!("pipemicd: PipeWire mute {} -> {} (follows Wave:3)", pw, m);
-                set_source_mute(&name, m).then_some(m)
+                let ok = set_source_mute(&name, m);
+                if ok {
+                    // Until the node's Props catch up; else the next tick
+                    // would read the old value as a PipeWire-side change.
+                    if let Ok(mut v) = view.lock() {
+                        if let Some(s) = v.source.as_mut().filter(|s| s.name == name) {
+                            s.mute = Some(m);
+                        }
+                    }
+                }
+                ok.then_some(m)
             }
             MuteAction::SetHardware(m) => {
                 eprintln!("pipemicd: Wave:3 mute {} -> {} (follows PipeWire)", hw, m);
@@ -237,14 +286,6 @@ fn pactl(args: &[&str]) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn wave3_source() -> Option<String> {
-    pactl(&["list", "sources", "short"])?
-        .lines()
-        .filter_map(|l| l.split('\t').nth(1))
-        .find(|n| n.starts_with(SOURCE_PREFIX) && !n.ends_with(".monitor"))
-        .map(str::to_string)
-}
-
 /// Card profile with the mic input (and the headphone output).
 const MIC_PROFILE: &str = "output:analog-stereo+input:mono-fallback";
 
@@ -252,36 +293,22 @@ const MIC_PROFILE: &str = "output:analog-stereo+input:mono-fallback";
 /// "Digital Stereo (IEC958) Output", 2026-11-06) or "Off": the mic shows Live
 /// but nothing captures. If the card is there but its mic input isn't, switch
 /// to the profile that has it. Waits up to ~10 s for the card to settle.
-fn ensure_mic_input() {
+fn ensure_mic_input(view: &Mutex<WaveView>) {
+    let look = || view.lock().map(|v| (v.card.clone(), v.source.is_some())).unwrap_or_default();
     for _ in 0..10 {
         std::thread::sleep(Duration::from_secs(1));
-        let Some(card) = wave3_card() else { continue };
-        if wave3_source().is_some() {
+        let (Some(_), has_source) = look() else { continue };
+        if has_source {
             return;
         }
         // Give the session manager a moment to pick its own profile first.
         std::thread::sleep(Duration::from_secs(2));
-        if wave3_source().is_none() {
+        if let (Some(card), false) = look() {
             let ok = pactl(&["set-card-profile", &card, MIC_PROFILE]).is_some();
             eprintln!("pipemicd: Wave:3 came back without its mic input; set card profile {MIC_PROFILE}: {}", if ok { "ok" } else { "failed" });
         }
         return;
     }
-}
-
-fn wave3_card() -> Option<String> {
-    pactl(&["list", "cards", "short"])?
-        .lines()
-        .filter_map(|l| l.split('\t').nth(1))
-        .find(|n| n.contains("Elgato_Systems_Elgato_Wave_3"))
-        .map(str::to_string)
-}
-
-fn source_mute(name: &str) -> Option<bool> {
-    let out = pactl(&["get-source-mute", name])?;
-    // "Mute: yes" / "Mute: no" (localised builds still print yes/no).
-    let v = out.split(':').nth(1)?.trim();
-    Some(v == "yes")
 }
 
 fn set_source_mute(name: &str, mute: bool) -> bool {

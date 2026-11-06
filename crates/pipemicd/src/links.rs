@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::mic::{SharedView, WaveSource};
 use crate::model::{Config, Router};
 
 pub enum NodeMatch {
@@ -112,6 +113,20 @@ struct State {
     /// App-meter slot -> app stream node id linked into it.
     slots: Vec<Option<u32>>,
     app_peaks: Option<std::sync::Arc<Vec<std::sync::atomic::AtomicU32>>>,
+    /// Wave:3 source node: id, bound proxy and its Props listener.
+    wave_src: Option<(u32, pw::node::Node, pw::node::NodeListener)>,
+    /// Wave:3 card (device global id).
+    wave_card: Option<u32>,
+}
+
+/// `mute` of a node Props param, if it has one.
+fn props_mute(pod: &spa::pod::Pod) -> Option<bool> {
+    let (_, v) = spa::pod::deserialize::PodDeserializer::deserialize_any_from(pod.as_bytes()).ok()?;
+    let spa::pod::Value::Object(o) = v else { return None };
+    o.properties.iter().find(|p| p.key == spa::sys::SPA_PROP_mute).and_then(|p| match p.value {
+        spa::pod::Value::Bool(b) => Some(b),
+        _ => None,
+    })
 }
 
 impl State {
@@ -245,7 +260,9 @@ fn is_feedback(from: &str, to: &str) -> bool {
 }
 
 impl Graph {
-    /// `bind_nodes`: node names to bind for `set_controls`.
+    /// `bind_nodes`: node names to bind for `set_controls`. `wave` is kept
+    /// current with the Wave:3 card and source (see `mic::WaveView`).
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         core: &pw::core::CoreRc,
         wants: Vec<Want>,
@@ -254,6 +271,7 @@ impl Graph {
         pins: HashMap<String, Option<String>>,
         output_fallback: bool,
         app_peaks: std::sync::Arc<Vec<std::sync::atomic::AtomicU32>>,
+        wave: SharedView,
     ) -> anyhow::Result<Self> {
         let registry = Rc::new(core.get_registry_rc()?);
         let state = Rc::new(RefCell::new(State {
@@ -307,6 +325,7 @@ impl Graph {
         let st_add = state.clone();
         let st_rm = state.clone();
         let reg = registry.clone();
+        let wave_rm = wave.clone();
         let listener = registry
             .add_listener_local()
             .global(move |g| {
@@ -353,6 +372,30 @@ impl Graph {
                                 categories,
                             },
                         );
+                        if name.starts_with(crate::mic::SOURCE_PREFIX) && props.get("media.class") == Some("Audio/Source") {
+                            match reg.bind::<pw::node::Node, _>(g) {
+                                Ok(n) => {
+                                    let view = wave.clone();
+                                    let listener = n
+                                        .add_listener_local()
+                                        .param(move |_, _, _, _, pod| {
+                                            let Some(m) = pod.and_then(props_mute) else { return };
+                                            if let Ok(mut v) = view.lock() {
+                                                if let Some(s) = v.source.as_mut() {
+                                                    s.mute = Some(m);
+                                                }
+                                            }
+                                        })
+                                        .register();
+                                    n.subscribe_params(&[spa::param::ParamType::Props]);
+                                    st.wave_src = Some((g.id, n, listener));
+                                    if let Ok(mut v) = wave.lock() {
+                                        v.source = Some(WaveSource { name: name.to_owned(), ready: None, mute: None });
+                                    }
+                                }
+                                Err(e) => eprintln!("pipemicd: bind {name} failed: {e}"),
+                            }
+                        }
                         if bind_nodes.iter().any(|b| b == name) {
                             match reg.bind::<pw::node::Node, _>(g) {
                                 Ok(n) => {
@@ -369,7 +412,25 @@ impl Graph {
                             return;
                         };
                         let Ok(node) = node.parse() else { return };
-                        st_add.borrow_mut().ports.insert(g.id, Port { node, name: name.to_owned(), out: dir == "out" });
+                        let mut st = st_add.borrow_mut();
+                        st.ports.insert(g.id, Port { node, name: name.to_owned(), out: dir == "out" });
+                        // First output port of the Wave:3 source: WirePlumber is done with it.
+                        if dir == "out" && st.wave_src.as_ref().is_some_and(|w| w.0 == node) {
+                            if let Ok(mut v) = wave.lock() {
+                                if let Some(s) = v.source.as_mut() {
+                                    s.ready.get_or_insert_with(std::time::Instant::now);
+                                }
+                            }
+                        }
+                    }
+                    ObjectType::Device => {
+                        if let Some(name) = props.get("device.name").filter(|n| n.contains(crate::mic::CARD_MATCH)) {
+                            st_add.borrow_mut().wave_card = Some(g.id);
+                            if let Ok(mut v) = wave.lock() {
+                                v.card = Some(name.to_owned());
+                            }
+                        }
+                        return;
                     }
                     ObjectType::Metadata => {
                         if props.get("metadata.name") == Some("default") {
@@ -408,6 +469,18 @@ impl Graph {
             })
             .global_remove(move |id| {
                 let mut st = st_rm.borrow_mut();
+                if st.wave_src.as_ref().is_some_and(|w| w.0 == id) {
+                    st.wave_src = None;
+                    if let Ok(mut v) = wave_rm.lock() {
+                        v.source = None;
+                    }
+                }
+                if st.wave_card == Some(id) {
+                    st.wave_card = None;
+                    if let Ok(mut v) = wave_rm.lock() {
+                        v.card = None;
+                    }
+                }
                 st.live.remove(&id);
                 st.nodes.remove(&id);
                 st.info.remove(&id);
@@ -430,8 +503,10 @@ impl Graph {
     }
 
     /// Re-create wanted links that never came up or were torn down behind
-    /// our back (e.g. PipeWire out of file descriptors during a mic replug).
-    /// Call every few seconds.
+    /// our back (e.g. PipeWire out of file descriptors during a mic replug),
+    /// and create any wanted link whose ports exist but that was never asked
+    /// for (after a WirePlumber restart the Wave:3 came back with its ports
+    /// and stayed unlinked, 2026-11-06). Call every few seconds.
     pub fn heal(&self) {
         let dead = {
             let mut st = self.state.borrow_mut();
@@ -447,8 +522,9 @@ impl Graph {
         };
         if dead > 0 {
             eprintln!("pipemicd: {dead} link(s) missing, re-creating");
-            (self.reconcile)();
         }
+        // Cheap: skips every link we already hold.
+        (self.reconcile)();
     }
 
     /// Clear `target.object` on streams we moved, so they go back to the

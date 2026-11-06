@@ -115,8 +115,8 @@ impl Probe {
                 let Some(raw) = data.data() else { return };
                 let raw = &raw[..bytes.min(raw.len())];
                 let mut max = [0f32; 64];
-                for (k, s) in raw.chunks_exact(4).enumerate() {
-                    let v = f32::from_le_bytes([s[0], s[1], s[2], s[3]]).abs();
+                for (k, s) in raw.as_chunks::<4>().0.iter().enumerate() {
+                    let v = f32::from_le_bytes(*s).abs();
                     let c = k % n;
                     if v > max[c] {
                         max[c] = v;

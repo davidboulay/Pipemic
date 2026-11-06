@@ -112,10 +112,10 @@ pub fn trash_preset(name: &str) -> Result<(), String> {
 fn all_files() -> Vec<(std::time::SystemTime, PathBuf)> {
     let mut lib = Vec::new();
     walk(&library_dir(), 1, &mut lib);
-    lib.sort_by(|a, b| b.0.cmp(&a.0));
+    lib.sort_by_key(|f| std::cmp::Reverse(f.0));
     let mut dl = Vec::new();
     walk(&downloads_dir(), 0, &mut dl);
-    dl.sort_by(|a, b| b.0.cmp(&a.0));
+    dl.sort_by_key(|f| std::cmp::Reverse(f.0));
     lib.extend(dl);
     lib
 }

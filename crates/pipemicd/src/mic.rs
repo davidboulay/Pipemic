@@ -135,6 +135,7 @@ fn run(state: Arc<Mutex<MicState>>, rx: mpsc::Receiver<Job>) {
                     s.info = version.as_ref().map(MicInfo::from);
                 }
                 dev = Some(d);
+                std::thread::spawn(ensure_mic_input);
             }
         }
 
@@ -241,6 +242,38 @@ fn wave3_source() -> Option<String> {
         .lines()
         .filter_map(|l| l.split('\t').nth(1))
         .find(|n| n.starts_with(SOURCE_PREFIX) && !n.ends_with(".monitor"))
+        .map(str::to_string)
+}
+
+/// Card profile with the mic input (and the headphone output).
+const MIC_PROFILE: &str = "output:analog-stereo+input:mono-fallback";
+
+/// After a replug the card has come back on an output-only profile (seen:
+/// "Digital Stereo (IEC958) Output", 2026-11-06) or "Off": the mic shows Live
+/// but nothing captures. If the card is there but its mic input isn't, switch
+/// to the profile that has it. Waits up to ~10 s for the card to settle.
+fn ensure_mic_input() {
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_secs(1));
+        let Some(card) = wave3_card() else { continue };
+        if wave3_source().is_some() {
+            return;
+        }
+        // Give the session manager a moment to pick its own profile first.
+        std::thread::sleep(Duration::from_secs(2));
+        if wave3_source().is_none() {
+            let ok = pactl(&["set-card-profile", &card, MIC_PROFILE]).is_some();
+            eprintln!("pipemicd: Wave:3 came back without its mic input; set card profile {MIC_PROFILE}: {}", if ok { "ok" } else { "failed" });
+        }
+        return;
+    }
+}
+
+fn wave3_card() -> Option<String> {
+    pactl(&["list", "cards", "short"])?
+        .lines()
+        .filter_map(|l| l.split('\t').nth(1))
+        .find(|n| n.contains("Elgato_Systems_Elgato_Wave_3"))
         .map(str::to_string)
 }
 

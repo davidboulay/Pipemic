@@ -1281,12 +1281,6 @@ impl App {
         self.incoming.as_ref().is_some_and(|i| i.state == IncomingState::Waiting)
     }
 
-    /// Show a toast that stays until replaced.
-    fn toast_now(&mut self, msg: String) {
-        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
-        self.toast = Some((id, msg));
-    }
-
     /// Name of the marketplace add-on with this product page.
     fn addon_url_name(&self, url: &str) -> Option<String> {
         let AddonList::Done(Ok(list)) = &self.addons else { return None };

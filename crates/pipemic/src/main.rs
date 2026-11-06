@@ -7,6 +7,7 @@
 //! fader per mix with its mute, link toggle); OUTPUTS = one row per mix
 //! (output device, meter, mute, volume).
 
+mod addons;
 mod icons;
 mod mic_art;
 mod settings;
@@ -551,6 +552,17 @@ enum Message {
     Shot(iced::window::Screenshot),
     Tray(tray::Out),
     WindowClosed(iced::window::Id),
+    /// Open (Some(channel)) or close the effects sheet.
+    ShowFx(Option<String>),
+    AddonsDone(Result<Vec<wave_catalog::marketplace::Addon>, String>),
+    Downloads(Vec<addons::LocalPreset>),
+    /// Put an EQ preset file on a channel.
+    EqImport(String, std::path::PathBuf),
+    EqEnabled(String, bool),
+    EqRemove(String),
+    EqDone(Result<Value, String>),
+    OpenUrl(String),
+    FileDropped(std::path::PathBuf),
 }
 
 #[derive(Default)]
@@ -587,6 +599,22 @@ struct App {
     tray: Option<tray::TrayHandle>,
     /// What the tray shows (connected, muted), to update it only on change.
     tray_state: Option<(bool, bool)>,
+    /// Channel whose effects sheet is open.
+    fx: Option<String>,
+    /// Marketplace add-ons (fetched when the effects sheet first opens).
+    addons: AddonList,
+    /// EQ presets found in the Downloads folder.
+    downloads: Vec<addons::LocalPreset>,
+    /// Last effects error, shown in the sheet.
+    fx_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+enum AddonList {
+    #[default]
+    Idle,
+    Loading,
+    Done(Result<Vec<wave_catalog::marketplace::Addon>, String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -632,6 +660,9 @@ impl App {
         if view == "device-info" {
             tasks.push(Task::done(Message::CheckFirmware));
         }
+        if let Some(c) = view.strip_prefix("fx:") {
+            tasks.push(Task::done(Message::ShowFx(Some(c.to_string()))));
+        }
         let app = Self {
             show_device: view == "device" || view == "device-info",
             device_tab: (view == "device-info") as u8,
@@ -660,6 +691,10 @@ impl App {
         let background = Subscription::batch([
             Subscription::run(tray::run).map(Message::Tray),
             iced::window::close_events().map(Message::WindowClosed),
+            iced::event::listen_with(|e, _, _| match e {
+                iced::Event::Window(iced::window::Event::FileDropped(p)) => Some(Message::FileDropped(p)),
+                _ => None,
+            }),
         ]);
         if self.window.is_none() {
             // Hidden: just keep the tray's mute state current.
@@ -730,7 +765,13 @@ impl App {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Tick => return Task::perform(send(json!({"cmd": "status"})), Message::Status),
-            Message::AppsTick => return self.apps_request(),
+            Message::AppsTick => {
+                let mut t = vec![self.apps_request()];
+                if self.fx.is_some() {
+                    t.push(Task::perform(blocking(addons::scan_downloads), Message::Downloads));
+                }
+                return Task::batch(t);
+            }
             Message::MeterTick => {
                 if !self.metering && self.error.is_none() {
                     self.metering = true;
@@ -851,6 +892,44 @@ impl App {
             Message::Knob(k) => return Task::perform(send(json!({"cmd": "mic", "knob": k})), Message::Sent),
             Message::Assign(app, channel) => {
                 return Task::perform(send(json!({"cmd": "assign", "app": app, "channel": channel})), Message::Apps)
+            }
+            Message::ShowFx(c) => {
+                self.fx_error = None;
+                self.fx = c;
+                if self.fx.is_none() {
+                    return Task::none();
+                }
+                let mut t = vec![Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
+                if !matches!(self.addons, AddonList::Loading | AddonList::Done(Ok(_))) {
+                    self.addons = AddonList::Loading;
+                    t.push(Task::perform(blocking(wave_catalog::marketplace::wave_link_addons), Message::AddonsDone));
+                }
+                return Task::batch(t);
+            }
+            Message::AddonsDone(r) => self.addons = AddonList::Done(r),
+            Message::Downloads(d) => self.downloads = d,
+            Message::EqImport(c, path) => {
+                let req = json!({"cmd": "eq", "channel": c, "import": path});
+                return Task::perform(send(req), Message::EqDone);
+            }
+            Message::EqEnabled(c, on) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "enabled": on})), Message::EqDone),
+            Message::EqRemove(c) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "clear": true})), Message::EqDone),
+            Message::EqDone(r) => match r {
+                Ok(v) => {
+                    self.fx_error = None;
+                    self.take_reply(&v);
+                }
+                Err(e) => self.fx_error = Some(e),
+            },
+            Message::OpenUrl(u) => {
+                if let Err(e) = addons::open_url(&u) {
+                    self.fx_error = Some(e);
+                }
+            }
+            Message::FileDropped(p) => {
+                if let Some(c) = self.fx.clone() {
+                    return self.update(Message::EqImport(c, p));
+                }
             }
             Message::SetOutput(mix, o) => {
                 return Task::perform(send(json!({"cmd": "mix", "mix": mix, "output": o.name})), Message::Sent)
@@ -1067,7 +1146,7 @@ impl App {
         // Two mute toggles (26 px each in compact) plus the link button (21 px).
         let body = self.faders(&cid, mixes, color, compact, !compact || inner_w >= 76.0);
 
-        card(column![header, hmeter(self.peak("channel", &cid)), app_box, body].spacing(12).padding(12))
+        card(column![header, hmeter(self.peak("channel", &cid)), app_box, self.fx_chip(c, compact), body].spacing(12).padding(12))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1514,6 +1593,164 @@ impl App {
         r.into()
     }
 
+    /// Under a strip's apps: the channel's EQ (name, on/off) or "Effects".
+    fn fx_chip<'a>(&'a self, c: &Value, compact: bool) -> Element<'a, Message> {
+        let cid = c["id"].as_str().unwrap_or("").to_string();
+        let eq = &c["eq"];
+        let has = eq.is_object();
+        let on = has && eq["enabled"] != false;
+        let label = if !has {
+            if compact { "Effects".to_string() } else { "Add effect".to_string() }
+        } else if compact {
+            "EQ".to_string()
+        } else {
+            eq["name"].as_str().unwrap_or("EQ").to_string()
+        };
+        let content = row![
+            icon(icons::EQ, 14.0, if on { ON } else { DIM }),
+            text(label).size(12).color(if has { TEXT } else { DIM }).wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let hint = match (has, on) {
+            (false, _) => "Add an equalizer preset to this channel".to_string(),
+            (true, true) => format!("Equalizer “{}” is on. Click to change it.", eq["name"].as_str().unwrap_or("")),
+            (true, false) => format!("Equalizer “{}” is off. Click to change it.", eq["name"].as_str().unwrap_or("")),
+        };
+        let b = button(container(content).clip(true)).width(Length::Fill).padding([5, 8]).style(soft_button).on_press(Message::ShowFx(Some(cid)));
+        iced::widget::tooltip(b, tooltip_box(hint), iced::widget::tooltip::Position::Top).gap(6).into()
+    }
+
+    /// A channel's effects: its EQ, presets already downloaded, and the
+    /// marketplace add-ons that work on Linux (with a link to get them).
+    fn fx_sheet<'a>(&'a self, cid: &str) -> Element<'a, Message> {
+        let c = self.channel(cid);
+        let label = self.channel_label(cid);
+        let color = channel_color(cid);
+        let eq = &c["eq"];
+        let current = eq["name"].as_str().map(String::from);
+        let badge = container(icon(icons::channel_glyph(cid), 16.0, Color::WHITE)).center(30).style(move |_| container::Style {
+            background: Some(color.into()),
+            border: border::rounded(9),
+            ..Default::default()
+        });
+
+        // Current equalizer.
+        let eq_group: Element<'a, Message> = if eq.is_object() {
+            let on = eq["enabled"] != false;
+            let mut bands = column![].spacing(4);
+            for b in eq["band"].as_array().into_iter().flatten() {
+                let off = b["on"] == false;
+                bands = bands.push(text(format!("{}{}", addons::band_label(b), if off { " (off)" } else { "" })).size(12).color(DIM));
+            }
+            let (c1, c2) = (cid.to_string(), cid.to_string());
+            group(column![
+                row![
+                    text(current.clone().unwrap_or_default()).size(14).font(SEMIBOLD).width(Length::Fill),
+                    toggler(on).size(18).style(switch_style).on_toggle(move |v| Message::EqEnabled(c1.clone(), v)),
+                ]
+                .align_y(Alignment::Center),
+                bands,
+                separator(),
+                row![
+                    text(if on { "On: the mixes get the equalized sound." } else { "Off: the sound passes unchanged." }).size(12).color(DIM).width(Length::Fill),
+                    button(text("Remove").size(12)).padding([5, 12]).style(soft_button).on_press(Message::EqRemove(c2)),
+                ]
+                .align_y(Alignment::Center),
+            ]
+            .spacing(10))
+        } else {
+            group(column![text("No equalizer on this channel. Pick a preset below.").size(12).color(DIM)])
+        };
+
+        // Downloaded presets.
+        let mut local = column![].spacing(2);
+        for p in &self.downloads {
+            let using = current.as_deref() == Some(p.name.as_str());
+            let mut line = row![text(p.name.clone()).size(13).width(Length::Fill)].spacing(10).align_y(Alignment::Center);
+            line = if using {
+                line.push(text("In use").size(11).color(ON))
+            } else {
+                line.push(
+                    button(text("Use").size(12).font(SEMIBOLD))
+                        .padding([5, 14])
+                        .style(primary_button)
+                        .on_press(Message::EqImport(cid.to_string(), p.path.clone())),
+                )
+            };
+            local = local.push(container(line).padding([6, 10]));
+        }
+        let downloads_dir = addons::downloads_dir();
+        let local_hint = if self.downloads.is_empty() {
+            format!("No EQ presets in {} yet. Get one below; it shows up here once downloaded. You can also drop a preset file on this window.", downloads_dir.display())
+        } else {
+            format!("Found in {}. You can also drop a preset file on this window.", downloads_dir.display())
+        };
+
+        // Marketplace.
+        let market: Element<'a, Message> = match &self.addons {
+            AddonList::Idle | AddonList::Loading => text("Loading the marketplace…").size(12).color(DIM).into(),
+            AddonList::Done(Err(e)) => text(format!("Couldn't load the marketplace: {e}")).size(12).color(MUTED).into(),
+            AddonList::Done(Ok(list)) => {
+                let mut col = column![].spacing(2);
+                let have: Vec<String> = self.downloads.iter().map(|d| d.name.to_lowercase()).collect();
+                let mut items: Vec<_> = list.iter().filter(|a| a.runs_on_linux()).collect();
+                items.sort_by_key(|a| a.name.to_lowercase());
+                for a in items {
+                    let got = have.contains(&a.name.to_lowercase());
+                    let info = column![
+                        text(a.name.clone()).size(13).font(SEMIBOLD),
+                        text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) })
+                            .size(11)
+                            .color(DIM)
+                            .wrapping(iced::widget::text::Wrapping::None),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill);
+                    let action: Element<'a, Message> = if got {
+                        text("Downloaded").size(11).color(DIM).into()
+                    } else {
+                        let b = button(text("Get").size(12)).padding([5, 14]).style(soft_button).on_press(Message::OpenUrl(a.url.clone()));
+                        iced::widget::tooltip(b, tooltip_box("Opens the product page. Download it with your Elgato account.".into()), iced::widget::tooltip::Position::Left)
+                            .gap(6)
+                            .into()
+                    };
+                    col = col.push(container(row![container(info).clip(true).width(Length::Fill), action].spacing(10).align_y(Alignment::Center)).padding([6, 10]));
+                }
+                col.into()
+            }
+        };
+
+        let mut list = column![heading("EQUALIZER"), eq_group, heading("DOWNLOADED PRESETS"), text(local_hint).size(11).color(DIM)].spacing(8);
+        if !self.downloads.is_empty() {
+            list = list.push(group(local));
+        }
+        list = list
+            .push(Space::new().height(4))
+            .push(heading("ELGATO MARKETPLACE"))
+            .push(text("EQ presets work on Linux. Plugins (Windows/macOS only) are not listed.").size(11).color(DIM))
+            .push(group(column![market]));
+
+        let mut body = column![row![
+            badge,
+            column![
+                text(format!("Effects on {label}")).size(18).font(SEMIBOLD),
+                text("Shapes this channel's sound before it reaches your mixes.").size(12).color(DIM),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center)]
+        .spacing(16);
+        if let Some(e) = &self.fx_error {
+            body = body.push(text(e.clone()).size(12).color(MUTED));
+        }
+        body = body.push(scrollable(list.padding(iced::Padding::ZERO.right(12))).height(Length::Fill));
+        modal(sheet(body.padding(24)).width(600).height(660).into(), Message::ShowFx(None))
+    }
+
     fn settings_view<'a>(&'a self) -> Element<'a, Message> {
         let version = format!(
             "{} ({})",
@@ -1711,6 +1948,8 @@ impl App {
         .style(|_| container::background(BG));
         if self.show_settings {
             stack![main, self.settings_view()].into()
+        } else if let Some(cid) = self.fx.as_deref() {
+            stack![main, self.fx_sheet(cid)].into()
         } else if self.show_device {
             stack![main, self.device_sheet()].into()
         } else if let Some(cid) = self.open.as_deref() {

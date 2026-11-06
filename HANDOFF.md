@@ -120,5 +120,10 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Verified on the device: tones through Other match the expected RBJ curves within 0.01 dB (test EQ, imported
   "Old Radio", EQ off = 0.0 dB); mic flows through `pipemic.fx.mic` into Outgoing. Restarting pipemicd makes Spotify
   pause (its sink disappears for a moment).
-- Next: UI. Per-channel EQ badge/toggle, and an "Add-ons" view listing the 14 EQ presets from
-  `mp-gateway.elgato.com` with "Get" (opens the product page) and import from `~/Downloads`.
+- UI (same branch): each strip has an effects chip ("Add effect" / preset name, green when on). It opens
+  "Effects on <channel>": the EQ (on/off switch, bands, Remove), EQ presets found in Downloads (+ one subfolder
+  level) with "Use", drag-and-drop of a preset file, and the marketplace's EQ presets (`wave_catalog::marketplace`)
+  with "Get" opening the product page. Not yet tried by the user.
+- Dev aid: `PIPEMIC_VIEW=fx:<channel>`. To screenshot beside a running Pipemic, use a short private
+  `XDG_RUNTIME_DIR` with a symlink to `pipemicd.sock` and an absolute `WAYLAND_DISPLAY` (single-instance socket).
+- Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.

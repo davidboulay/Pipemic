@@ -1,6 +1,6 @@
 [Unit]
 Description=Pipemic mixer daemon (PipeWire)
-Documentation=https://github.com/davidboulay/pipemic
+Documentation=https://github.com/davidboulay/Pipemic
 After=pipewire.service wireplumber.service
 Wants=wireplumber.service
 Requires=pipewire.service

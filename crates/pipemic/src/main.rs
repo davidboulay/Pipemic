@@ -1136,11 +1136,8 @@ impl App {
                 use wave_catalog::marketplace::InstallError;
                 let rescan = Task::perform(blocking(addons::scan_downloads), Message::Downloads);
                 let from_link = !variant.is_empty();
-                if matches!(result, Err(InstallError::SignIn)) {
-                    // The website no longer accepts the session.
-                    addons::sign_out();
-                    self.signed_in = false;
-                }
+                // The website no longer accepted the session (even renewed).
+                self.signed_in = addons::signed_in();
                 match (from_link, result) {
                     (true, r) => {
                         let Some(i) = self.incoming.as_mut().filter(|i| i.variant == variant) else { return rescan };

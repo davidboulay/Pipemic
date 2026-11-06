@@ -236,17 +236,32 @@ pub fn signed_in() -> bool {
     session_path().exists()
 }
 
+fn login_exe() -> PathBuf {
+    let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("pipemic-login")));
+    exe.filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from("pipemic-login"))
+}
+
 /// Show the sign-in window and wait for it. Ok(true) = signed in.
 pub fn sign_in() -> Result<bool, String> {
-    let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("pipemic-login")));
-    let exe = exe.filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from("pipemic-login"));
-    let st = std::process::Command::new(exe).status().map_err(|e| format!("couldn't open the sign-in window: {e}"))?;
+    let st = std::process::Command::new(login_exe()).status().map_err(|e| format!("couldn't open the sign-in window: {e}"))?;
     Ok(st.success() && signed_in())
 }
 
-/// Forget the session and the sign-in window's browser profile.
-pub fn sign_out() {
+/// Renew the session without a window (the access cookie lasts 15 min;
+/// the website renews it from its 30-day refresh cookie).
+fn refresh_session() -> bool {
+    std::process::Command::new(login_exe()).arg("--refresh").status().is_ok_and(|s| s.success())
+}
+
+/// The website no longer accepts the session: forget it, but keep the
+/// sign-in window's profile so signing in again is quick.
+fn session_expired() {
     let _ = std::fs::remove_file(session_path());
+}
+
+/// Sign out: forget the session and the sign-in window's browser profile.
+pub fn sign_out() {
+    session_expired();
     let _ = std::fs::remove_dir_all(data_dir().join("webview"));
 }
 
@@ -255,7 +270,17 @@ pub fn sign_out() {
 pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog::marketplace::InstallError> {
     use wave_catalog::marketplace::{download_variant, InstallError};
     let mut session = load_session().ok_or(InstallError::SignIn)?;
-    let result = download_variant(&mut session, variant);
+    let mut result = download_variant(&mut session, variant);
+    if matches!(result, Err(InstallError::SignIn)) {
+        // Most likely the 15-minute access cookie: renew and try once more.
+        if refresh_session() {
+            session = load_session().ok_or(InstallError::SignIn)?;
+            result = download_variant(&mut session, variant);
+        }
+        if matches!(result, Err(InstallError::SignIn)) {
+            session_expired();
+        }
+    }
     if let Ok((_, true)) = &result {
         let _ = save_session(&session);
     }

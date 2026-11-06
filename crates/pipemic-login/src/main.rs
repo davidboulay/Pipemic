@@ -9,6 +9,11 @@
 //! (WebKit's private mode drops the website's sign-in handshake cookies, so
 //! signing in never completed there). Signing out in Pipemic deletes it.
 //! Exit code 0 = signed in, 1 = closed without signing in.
+//!
+//! `--refresh`: no window. Loads the site with the kept profile so its own
+//! code renews the 15-minute access cookie (the refresh cookie lasts 30
+//! days), saves the session and exits 0; exit 3 if that didn't happen
+//! within 25 s (the user has to sign in again).
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -51,11 +56,17 @@ fn save(cookies: &[(String, String)]) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
+fn now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 fn main() {
+    let refresh = std::env::args().any(|a| a == "--refresh");
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Sign in to Elgato · Pipemic")
         .with_inner_size(LogicalSize::new(520.0, 760.0))
+        .with_visible(!refresh)
         .build(&event_loop)
         .expect("window");
 
@@ -78,6 +89,9 @@ fn main() {
         match event {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => std::process::exit(1),
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                if refresh && started.elapsed() > Duration::from_secs(25) {
+                    std::process::exit(3);
+                }
                 // Back on the marketplace with a session: keep it and close.
                 let url = webview.url().unwrap_or_default();
                 if std::env::var_os("PIPEMIC_LOGIN_DEBUG").is_some() {
@@ -96,13 +110,19 @@ fn main() {
                 // Every marketplace cookie, whatever its path (the refresh
                 // token is scoped below the site root).
                 let Ok(all) = webview.cookies() else { return };
+                // A live access cookie: an expired one left from an earlier
+                // sign-in doesn't count.
+                let fresh = all.iter().any(|c| {
+                    c.name() == "__Host-kc_at"
+                        && c.expires().and_then(|e| e.datetime()).is_some_and(|d| d.unix_timestamp() > now() + 60)
+                });
                 let cookies: Vec<(String, String)> = all
                     .iter()
                     .filter(|c| c.domain().is_some_and(|d| d.trim_start_matches('.') == "marketplace.elgato.com"))
                     .map(|c| (c.name().to_string(), c.value().to_string()))
                     .collect();
                 let has = |n: &str| cookies.iter().any(|(k, _)| k == n);
-                if has(USER_COOKIE) && TOKEN_COOKIES.iter().any(|n| has(n)) {
+                if has(USER_COOKIE) && TOKEN_COOKIES.iter().any(|n| has(n)) && fresh {
                     match save(&cookies) {
                         Ok(()) => std::process::exit(0),
                         Err(e) => {

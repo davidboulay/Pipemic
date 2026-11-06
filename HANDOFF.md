@@ -153,6 +153,10 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   `direct_link`. Public `mp-gateway.elgato.com/allitems?ids=<variant>` gives name/thumbnail without sign-in.
   Set-Cookie renewals are merged; 401/403 signs out. Verified: a `wavelink://` link installed "EQ for Female
   Vocal Range" into the library with no browser Download click.
-- Not yet verified: session lifetime (when `__Host-kc_at` expires, does the proxy refresh from `kc_rt`?), Get for
-  a preset not yet in the user's library (expected: falls back to the product page).
+- Session lifetime: `__Host-kc_at` 15 min, `__Secure-kc_rt` (path `/api`) and `kc_user` 30 days, Keycloak SSO
+  (`KEYCLOAK_SESSION`) ~3 months. The proxy does NOT renew an expired access cookie by itself; the site's JS does.
+  So on 401/403 Pipemic runs `pipemic-login --refresh` (hidden window, same profile) and retries.
+  Verified 2026-11-06 16:23: expired access cookie (16:22:55) renewed to 16:38:11 in ~2 s, session file updated.
+  (A harmless "WebKit internal error" line is printed when the hidden window exits mid-load.)
+- Not yet verified: Get for a preset not yet in the user's library (expected: falls back to the product page).
 - Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.

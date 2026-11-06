@@ -191,7 +191,8 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Related WirePlumber race (not our code): a WirePlumber restart sometimes leaves devices unconfigured (nodes with
   `PortConfig none`, 0 ports). Without pipemicd 0/12 restarts; with a client running `pactl` every second 3-4/12.
   pipemicd's mute sync no longer runs `pactl` every second: it reads the Wave:3 source and its mute from the
-  registry (`mic::WaveView`, node Props `mute`) and only runs `pactl` to change something. ~50 restarts a few
+  registry (`mic::WaveView`, node Props `mute`) and only runs `pactl` to change something. Verified on the device:
+  4 pad taps, PipeWire followed each within ~1 s, no bounce back to the mic. ~50 restarts a few
   seconds apart wedged PipeWire as a whole (every ALSA node unconfigured, WirePlumber restarts didn't help);
   `systemctl --user restart pipewire pipewire-pulse wireplumber` fixed it. Don't stress-test that way again.
 - Stop crash (2026-11-06): pipemicd segfaulted on stop: `pw_context_destroy` disconnected the core while the

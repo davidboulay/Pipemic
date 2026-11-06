@@ -7,11 +7,11 @@
 **Audio mixer and mic control for the Elgato Wave:3 on Linux**: Wave Link's
 two-mix workflow,<br>built on PipeWire.
 
-[![Release](https://img.shields.io/github/v/release/davidboulay/pipemic?style=flat-square&color=0a84ff&labelColor=1c1c1e)](https://github.com/davidboulay/pipemic/releases/latest)
-[![CI](https://img.shields.io/github/actions/workflow/status/davidboulay/pipemic/ci.yml?branch=main&style=flat-square&label=tests&labelColor=1c1c1e)](https://github.com/davidboulay/pipemic/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/davidboulay/Pipemic?style=flat-square&color=0a84ff&labelColor=1c1c1e)](https://github.com/davidboulay/Pipemic/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/davidboulay/Pipemic/ci.yml?branch=main&style=flat-square&label=tests&labelColor=1c1c1e)](https://github.com/davidboulay/Pipemic/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/Linux%20%C2%B7%20PipeWire-ff375f?style=flat-square&labelColor=1c1c1e&label=runs%20on)](#install)
 [![Mic](https://img.shields.io/badge/Elgato%20Wave%3A3-ffd60a?style=flat-square&labelColor=1c1c1e&label=controls)](#supported-hardware)
-[![License](https://img.shields.io/github/license/davidboulay/pipemic?style=flat-square&color=6b7280&labelColor=1c1c1e)](LICENSE)
+[![License](https://img.shields.io/github/license/davidboulay/Pipemic?style=flat-square&color=6b7280&labelColor=1c1c1e)](LICENSE)
 
 [**Install**](#install) · [Features](#features) · [Using it](#using-pipemic) · [Troubleshooting](#when-the-mic-misbehaves) · [How it's built](#how-its-built) · [Project page](https://davidboulay.com/apps/pipemic/)
 
@@ -83,7 +83,7 @@ so build it from the tree.
 # Arch / CachyOS / Manjaro
 sudo pacman -S --needed rust clang libpipewire libusb gtk3 webkit2gtk-4.1 librsvg
 
-git clone https://github.com/davidboulay/pipemic && cd pipemic
+git clone https://github.com/davidboulay/Pipemic && cd pipemic
 
 # Let your user talk to the mic without root, then replug it
 sudo install -m644 udev/70-elgato-wave.rules /etc/udev/rules.d/

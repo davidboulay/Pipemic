@@ -180,3 +180,4 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Replug (2026-11-06): the Wave:3 came back on profile `output:iec958-stereo` (no mic source); UI showed Live, no
   input. pipemicd now checks after every connect and sets `output:analog-stereo+input:mono-fallback` if the card
   has no Wave:3 source. Verified by forcing iec958 and restarting pipemicd: fixed in 3 s, bridge relinked.
+- 2026-11-06: GitHub repo renamed to `davidboulay/Pipemic` (capital P); old URLs redirect. v0.3.0 released.

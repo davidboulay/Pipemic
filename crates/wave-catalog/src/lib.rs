@@ -1,5 +1,8 @@
 //! Elgato's firmware catalog (the endpoint Wave Link 3.4.0 for macOS uses).
 //! Blocking; call from a worker thread in GUIs.
+//! `marketplace`: Wave Link add-ons on the Elgato marketplace.
+
+pub mod marketplace;
 
 /// Catalog URL. The macOS parameters are what the app sends; the reply lists
 /// the same Wave:3 firmware regardless of OS.

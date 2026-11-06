@@ -13,6 +13,9 @@
 //!   {"cmd":"settings","output_fallback":true}
 //!   {"cmd":"channel","channel":"music","link":true}      // UI: faders move together
 //!   {"cmd":"mix","mix":"personal","output":"alsa_output…"} // "" = default output
+//!   {"cmd":"eq","channel":"mic","import":"/path/Old_Radio.xml","name":"Old Radio"}  // Elgato EQ preset add-on
+//!   {"cmd":"eq","channel":"mic","enabled":false}   // bypass; "clear":true removes it;
+//!                                                  // "set":{name,enabled,band:[{kind,freq,q,gain,on}]}
 //!   {"cmd":"levels"}   // -> {"ok":true,"levels":{"channel":{id:[l,r]},"mix":{id:[l,r]}}}
 //! Reply: {"ok":true,"config":{…},"mic":{…}} or {"ok":false,"error":"…"}
 //! Levels are decaying linear peaks (1.0 = 0 dBFS); poll at ~30 Hz.
@@ -40,6 +43,17 @@ pub enum Request {
     Channel { channel: String, volume: Option<f32>, mute: Option<bool>, link: Option<bool> },
     Mix { mix: String, volume: Option<f32>, mute: Option<bool>, output: Option<String> },
     Route { mix: String, channel: String, volume: Option<f32>, mute: Option<bool> },
+    /// Applied in order: clear, set, import, enabled.
+    Eq {
+        channel: String,
+        import: Option<String>,
+        /// Name to show for an imported preset (default: the one in the file).
+        name: Option<String>,
+        set: Option<crate::eq::Equalizer>,
+        enabled: Option<bool>,
+        #[serde(default)]
+        clear: bool,
+    },
     Mic(MicReq),
 }
 

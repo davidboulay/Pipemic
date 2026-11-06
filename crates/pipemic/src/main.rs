@@ -7,6 +7,7 @@
 //! fader per mix with its mute, link toggle); OUTPUTS = one row per mix
 //! (output device, meter, mute, volume).
 
+mod addons;
 mod icons;
 mod mic_art;
 mod settings;
@@ -27,7 +28,7 @@ use std::time::Duration;
 
 fn main() -> iced::Result {
     // Already running (window closed, icon in the tray)? Show that one.
-    if !tray::claim_single_instance() {
+    if !tray::claim_single_instance(link_arg().as_deref()) {
         return Ok(());
     }
     // A daemon, not a single-window app: closing the window leaves Pipemic
@@ -37,6 +38,11 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(theme())
         .run()
+}
+
+/// A marketplace link passed on the command line (`pipemic %u`).
+fn link_arg() -> Option<String> {
+    std::env::args().skip(1).find(|a| a.starts_with("wavelink://") || a.starts_with("wavelink-v2://"))
 }
 
 fn window_settings() -> iced::window::Settings {
@@ -551,6 +557,72 @@ enum Message {
     Shot(iced::window::Screenshot),
     Tray(tray::Out),
     WindowClosed(iced::window::Id),
+    /// Open (Some(channel)) or close the effects sheet.
+    ShowFx(Option<String>),
+    AddonsDone(Result<Vec<wave_catalog::marketplace::Addon>, String>),
+    Downloads(Vec<addons::LocalPreset>),
+    /// Put an EQ preset file on a channel.
+    /// (channel, file, name to show)
+    EqImport(String, std::path::PathBuf, Option<String>),
+    EqEnabled(String, bool),
+    EqDone(Result<Value, String>),
+    /// Install an add-on (signed in), else open its page and apply its file
+    /// once it's downloaded.
+    Get { name: String, url: String, variant: Option<String> },
+    /// A signed-in download finished; `channel` = apply it there.
+    Installed {
+        variant: String,
+        channel: Option<String>,
+        url: Option<String>,
+        result: Result<(String, std::path::PathBuf), wave_catalog::marketplace::InstallError>,
+    },
+    IncomingInfo(String, Result<(String, Option<String>), String>),
+    SignIn,
+    SignedIn(Result<bool, String>),
+    SignOut,
+    ThumbsDone(Vec<(String, Vec<u8>)>),
+    /// Move every file of this preset (library and Downloads) to the trash.
+    DeleteLocal(String),
+    RefreshAddons,
+    ToastDone(u64),
+    FileDropped(std::path::PathBuf),
+    /// "Open with Wave Link" on the marketplace site.
+    MarketLink(String),
+    /// Close the "add-on added" popup.
+    IncomingOk,
+    /// The mixer window gained / lost focus.
+    Focus(bool),
+}
+
+/// An add-on opened from the marketplace site: waiting for its file, then
+/// added to the preset library.
+#[derive(Debug, Clone)]
+struct Incoming {
+    /// Variant id from the link.
+    variant: String,
+    /// Name and thumbnail key, once looked up.
+    name: Option<String>,
+    state: IncomingState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum IncomingState {
+    /// Downloading through the signed-in session.
+    Downloading,
+    /// Waiting for the user's own download (not signed in, or the website
+    /// wouldn't hand the file to the session).
+    Waiting,
+    Added(String),
+    Failed(String),
+}
+
+/// An add-on the user went to download: applied to `channel` when its
+/// file shows up in Downloads.
+#[derive(Debug, Clone)]
+struct Pending {
+    channel: String,
+    name: String,
+    since: std::time::SystemTime,
 }
 
 #[derive(Default)]
@@ -587,6 +659,36 @@ struct App {
     tray: Option<tray::TrayHandle>,
     /// What the tray shows (connected, muted), to update it only on change.
     tray_state: Option<(bool, bool)>,
+    /// Channel whose effects sheet is open.
+    fx: Option<String>,
+    /// Marketplace add-ons (fetched when the effects sheet first opens).
+    addons: AddonList,
+    /// EQ presets found in the Downloads folder.
+    downloads: Vec<addons::LocalPreset>,
+    /// Last effects error, shown in the sheet.
+    fx_error: Option<String>,
+    /// When the marketplace list was last fetched.
+    addons_at: Option<std::time::Instant>,
+    /// Add-on id -> thumbnail.
+    thumbs: HashMap<String, image::Handle>,
+    pending: Option<Pending>,
+    /// Short confirmation ("Old Radio added to Other") and its id.
+    toast: Option<(u64, String)>,
+    incoming: Option<Incoming>,
+    /// The mixer window has keyboard focus.
+    focused: bool,
+    /// Signed in to the Elgato marketplace (pipemic-login session).
+    signed_in: bool,
+    /// The sign-in window is open.
+    signing_in: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+enum AddonList {
+    #[default]
+    Idle,
+    Loading,
+    Done(Result<Vec<wave_catalog::marketplace::Addon>, String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -632,11 +734,17 @@ impl App {
         if view == "device-info" {
             tasks.push(Task::done(Message::CheckFirmware));
         }
+        if let Some(l) = link_arg() {
+            tasks.push(Task::done(Message::MarketLink(l)));
+        }
+        if let Some(c) = view.strip_prefix("fx:") {
+            tasks.push(Task::done(Message::ShowFx(Some(c.to_string()))));
+        }
         let app = Self {
             show_device: view == "device" || view == "device-info",
             device_tab: (view == "device-info") as u8,
             show_settings: view == "settings",
-            open: view.strip_prefix("picker:").map(String::from), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
+            open: view.strip_prefix("picker:").map(String::from), signed_in: addons::signed_in(), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
         let mut app = app;
         if app.autostart {
             // Refresh older entries (Exec=pipemic) so login starts in the tray.
@@ -660,6 +768,12 @@ impl App {
         let background = Subscription::batch([
             Subscription::run(tray::run).map(Message::Tray),
             iced::window::close_events().map(Message::WindowClosed),
+            iced::event::listen_with(|e, _, _| match e {
+                iced::Event::Window(iced::window::Event::FileDropped(p)) => Some(Message::FileDropped(p)),
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(true)),
+                iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::Focus(false)),
+                _ => None,
+            }),
         ]);
         if self.window.is_none() {
             // Hidden: just keep the tray's mute state current.
@@ -670,6 +784,8 @@ impl App {
             time::every(Duration::from_millis(250)).map(|_| Message::Tick),
             time::every(Duration::from_secs(2)).map(|_| Message::AppsTick),
             time::every(Duration::from_millis(33)).map(|_| Message::MeterTick),
+            // New and updated marketplace add-ons.
+            time::every(Duration::from_secs(3600)).map(|_| Message::RefreshAddons),
         ])
     }
 
@@ -681,6 +797,19 @@ impl App {
                 self.tray_state = Some(state);
                 t.set(state.0, state.1);
             }
+        }
+    }
+
+    /// Put the window in front of the browser. On Wayland an app can't
+    /// raise its own window (winit's focus request is a no-op), but a new
+    /// window is shown on top: so reopen it unless it already has focus.
+    fn bring_forward(&mut self) -> Task<Message> {
+        match self.window {
+            Some(id) if !self.focused => {
+                self.window = None;
+                Task::batch([iced::window::close(id), self.show_window()])
+            }
+            _ => self.show_window(),
         }
     }
 
@@ -730,7 +859,13 @@ impl App {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Tick => return Task::perform(send(json!({"cmd": "status"})), Message::Status),
-            Message::AppsTick => return self.apps_request(),
+            Message::AppsTick => {
+                let mut t = vec![self.apps_request()];
+                if self.fx.is_some() || self.pending.is_some() || self.waiting_link() {
+                    t.push(Task::perform(blocking(addons::scan_downloads), Message::Downloads));
+                }
+                return Task::batch(t);
+            }
             Message::MeterTick => {
                 if !self.metering && self.error.is_none() {
                     self.metering = true;
@@ -823,6 +958,7 @@ impl App {
             }
             Message::Tray(tray::Out::Event(e)) => match e {
                 tray::Event::Show => return self.show_window(),
+                tray::Event::Open(url) => return self.update(Message::MarketLink(url)),
                 tray::Event::ToggleMute => {
                     let muted = self.mic["mute"] == true;
                     return self.update(Message::Mute(Target::MicGain, !muted));
@@ -852,11 +988,360 @@ impl App {
             Message::Assign(app, channel) => {
                 return Task::perform(send(json!({"cmd": "assign", "app": app, "channel": channel})), Message::Apps)
             }
+            Message::ShowFx(c) => {
+                self.fx_error = None;
+                self.fx = c;
+                if self.fx.is_none() {
+                    return Task::none();
+                }
+                let stale = self.addons_at.is_none_or(|t| t.elapsed() > Duration::from_secs(1800));
+                let mut t = vec![Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
+                if stale || matches!(self.addons, AddonList::Done(Err(_))) {
+                    t.push(self.update(Message::RefreshAddons));
+                }
+                return Task::batch(t);
+            }
+            Message::RefreshAddons => {
+                if matches!(self.addons, AddonList::Loading) {
+                    return Task::none();
+                }
+                // Keep showing the old list while refreshing.
+                if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                    self.addons = AddonList::Loading;
+                }
+                return Task::perform(blocking(wave_catalog::marketplace::wave_link_addons), Message::AddonsDone);
+            }
+            Message::AddonsDone(r) => {
+                let mut t = Task::none();
+                match r {
+                    Ok(list) => {
+                        self.addons_at = Some(std::time::Instant::now());
+                        let want: Vec<(String, String)> = list
+                            .iter()
+                            .filter(|a| a.runs_on_linux() && !self.thumbs.contains_key(&a.id))
+                            .filter_map(|a| Some((a.id.clone(), a.thumbnail.clone()?)))
+                            .collect();
+                        if !want.is_empty() {
+                            t = Task::perform(blocking(move || addons::thumbnails(want)), Message::ThumbsDone);
+                        }
+                        self.addons = AddonList::Done(Ok(list));
+                        self.resolve_incoming();
+                    }
+                    // A failed refresh keeps the list we have.
+                    Err(e) => {
+                        if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                            self.addons = AddonList::Done(Err(e));
+                        }
+                    }
+                }
+                return t;
+            }
+            Message::ThumbsDone(v) => {
+                for (id, bytes) in v {
+                    self.thumbs.insert(id, image::Handle::from_bytes(bytes));
+                }
+            }
+            Message::Downloads(d) => {
+                self.downloads = d;
+                self.resolve_incoming();
+                // The add-on the user went to get has arrived: apply it.
+                if let Some(p) = self.pending.clone() {
+                    let fresh = self.downloads.iter().find(|l| l.is(&p.name) && l.modified + Duration::from_secs(5) >= p.since);
+                    if let Some(l) = fresh {
+                        self.pending = None;
+                        let (c, path) = (p.channel.clone(), addons::add_to_library(&l.path).unwrap_or_else(|_| l.path.clone()));
+                        let msg = format!("{} added to {}", l.name, self.channel_label(&p.channel));
+                        return Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": p.name})), Message::EqDone)
+                            .chain(self.toast(msg));
+                    } else if p.since.elapsed().is_ok_and(|e| e > Duration::from_secs(900)) {
+                        self.pending = None; // gave up waiting
+                    }
+                }
+            }
+            Message::Get { name, url, variant } => {
+                if let (true, Some(v)) = (self.signed_in, variant) {
+                    let channel = self.fx.clone();
+                    self.fx_error = None;
+                    self.toast_now(format!("Installing {name}…"));
+                    return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                        variant: String::new(),
+                        channel: channel.clone(),
+                        url: Some(url.clone()),
+                        result,
+                    });
+                }
+                if let Some(c) = self.fx.clone() {
+                    self.pending = Some(Pending { channel: c, name, since: std::time::SystemTime::now() });
+                }
+                if let Err(e) = addons::open_url(&url) {
+                    self.fx_error = Some(e);
+                    self.pending = None;
+                }
+            }
+            Message::DeleteLocal(name) => {
+                if let Err(e) = addons::trash_preset(&name) {
+                    self.fx_error = Some(e);
+                }
+                return Task::perform(blocking(addons::scan_downloads), Message::Downloads);
+            }
+            Message::MarketLink(url) => {
+                let show = self.bring_forward();
+                let Some(variant) = addons::preset_link(&url) else {
+                    self.incoming = Some(Incoming {
+                        variant: String::new(),
+                        name: None,
+                        state: IncomingState::Failed("This add-on is a plugin. Pipemic can use EQ presets only.".into()),
+                    });
+                    return show;
+                };
+                let state = if self.signed_in { IncomingState::Downloading } else { IncomingState::Waiting };
+                self.incoming = Some(Incoming { variant: variant.clone(), name: None, state });
+                self.fx = None;
+                let v = variant.clone();
+                let mut t = vec![
+                    show,
+                    Task::perform(blocking(addons::scan_downloads), Message::Downloads),
+                    Task::perform(blocking(move || wave_catalog::marketplace::variant_info(&v)), {
+                        let v = variant.clone();
+                        move |r| Message::IncomingInfo(v.clone(), r)
+                    }),
+                ];
+                if self.signed_in {
+                    let v = variant.clone();
+                    t.push(Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                        variant: variant.clone(),
+                        channel: None,
+                        url: None,
+                        result,
+                    }));
+                }
+                if !matches!(self.addons, AddonList::Done(Ok(_))) {
+                    t.push(self.update(Message::RefreshAddons));
+                }
+                return Task::batch(t);
+            }
+            Message::IncomingOk => self.incoming = None,
+            Message::IncomingInfo(variant, r) => {
+                let Ok((name, thumb)) = r else { return Task::none() };
+                let Some(i) = self.incoming.as_mut().filter(|i| i.variant == variant) else { return Task::none() };
+                i.name = Some(name);
+                self.resolve_incoming();
+                if let Some(url) = thumb {
+                    let key = format!("variant:{variant}");
+                    if !self.thumbs.contains_key(&key) {
+                        return Task::perform(blocking(move || addons::thumbnails(vec![(key, url)])), Message::ThumbsDone);
+                    }
+                }
+            }
+            Message::Installed { variant, channel, url, result } => {
+                use wave_catalog::marketplace::InstallError;
+                let rescan = Task::perform(blocking(addons::scan_downloads), Message::Downloads);
+                let from_link = !variant.is_empty();
+                // The website no longer accepted the session (even renewed).
+                self.signed_in = addons::signed_in();
+                match (from_link, result) {
+                    (true, r) => {
+                        let Some(i) = self.incoming.as_mut().filter(|i| i.variant == variant) else { return rescan };
+                        i.state = match r {
+                            // The marketplace name reads better than the one inside the file.
+                            Ok((name, _)) => IncomingState::Added(i.name.clone().unwrap_or(name)),
+                            Err(InstallError::Other(e)) => IncomingState::Failed(e),
+                            Err(_) => IncomingState::Waiting,
+                        };
+                        self.resolve_incoming();
+                        return rescan;
+                    }
+                    (false, Ok((name, path))) => {
+                        self.toast = None;
+                        let Some(c) = channel else { return rescan };
+                        let msg = format!("{name} added to {}", self.channel_label(&c));
+                        return Task::batch([
+                            rescan,
+                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone).chain(self.toast(msg)),
+                        ]);
+                    }
+                    (false, Err(InstallError::Other(e))) => {
+                        self.toast = None;
+                        self.fx_error = Some(e);
+                    }
+                    // Not signed in any more, or not in the library yet: get it on the website.
+                    (false, Err(_)) => {
+                        self.toast = None;
+                        if let (Some(u), Some(c)) = (url, channel) {
+                            let name = self.addon_url_name(&u).unwrap_or_default();
+                            self.pending = Some(Pending { channel: c, name, since: std::time::SystemTime::now() });
+                            if let Err(e) = addons::open_url(&u) {
+                                self.fx_error = Some(e);
+                            }
+                        }
+                    }
+                }
+                return rescan;
+            }
+            Message::SignIn => {
+                if self.signing_in {
+                    return Task::none();
+                }
+                self.signing_in = true;
+                return Task::perform(blocking(addons::sign_in), Message::SignedIn);
+            }
+            Message::SignedIn(r) => {
+                self.signing_in = false;
+                self.signed_in = addons::signed_in();
+                if let Err(e) = r {
+                    self.fx_error = Some(e);
+                }
+                // A link was waiting for the sign-in: install it now.
+                if let (true, Some(i)) = (self.signed_in, self.incoming.as_mut()) {
+                    if i.state == IncomingState::Waiting && !i.variant.is_empty() {
+                        i.state = IncomingState::Downloading;
+                        let variant = i.variant.clone();
+                        let v = variant.clone();
+                        return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                            variant: variant.clone(),
+                            channel: None,
+                            url: None,
+                            result,
+                        });
+                    }
+                }
+            }
+            Message::SignOut => {
+                addons::sign_out();
+                self.signed_in = false;
+            }
+            Message::Focus(f) => self.focused = f,
+            Message::ToastDone(id) => {
+                if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
+                    self.toast = None;
+                }
+            }
+            Message::EqImport(c, path, name) => {
+                let req = json!({"cmd": "eq", "channel": c, "import": path, "name": name});
+                return Task::perform(send(req), Message::EqDone);
+            }
+            Message::EqEnabled(c, on) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "enabled": on})), Message::EqDone),
+            Message::EqDone(r) => match r {
+                Ok(v) => {
+                    self.fx_error = None;
+                    self.take_reply(&v);
+                }
+                Err(e) => self.fx_error = Some(e),
+            },
+            Message::FileDropped(p) => {
+                if let Some(c) = self.fx.clone() {
+                    return self.update(Message::EqImport(c, p, None));
+                }
+            }
             Message::SetOutput(mix, o) => {
                 return Task::perform(send(json!({"cmd": "mix", "mix": mix, "output": o.name})), Message::Sent)
             }
         }
         Task::none()
+    }
+
+    /// Waiting for the file of an add-on opened from the marketplace?
+    fn waiting_link(&self) -> bool {
+        self.incoming.as_ref().is_some_and(|i| i.state == IncomingState::Waiting)
+    }
+
+    /// Show a toast that stays until replaced.
+    fn toast_now(&mut self, msg: String) {
+        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
+        self.toast = Some((id, msg));
+    }
+
+    /// Name of the marketplace add-on with this product page.
+    fn addon_url_name(&self, url: &str) -> Option<String> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.url == url).map(|a| a.name.clone())
+    }
+
+    /// The marketplace add-on an incoming link points at.
+    fn incoming_addon(&self) -> Option<&wave_catalog::marketplace::Addon> {
+        let i = self.incoming.as_ref()?;
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.variant_ids.contains(&i.variant))
+    }
+
+    /// Its file is in Downloads (or the library): add it to the library.
+    fn resolve_incoming(&mut self) {
+        if !self.waiting_link() {
+            return;
+        }
+        let name = self.incoming.as_ref().and_then(|i| i.name.clone()).or_else(|| self.incoming_addon().map(|a| a.name.clone()));
+        let Some(name) = name else { return };
+        let Some(local) = self.downloads.iter().find(|l| l.is(&name)).cloned() else { return };
+        let state = match addons::add_to_library(&local.path) {
+            Ok(_) => IncomingState::Added(name),
+            Err(e) => IncomingState::Failed(e),
+        };
+        if let Some(i) = &mut self.incoming {
+            i.state = state;
+        }
+    }
+
+    /// Popup for "Open with Wave Link": wait for the download, then say
+    /// it's added and where to use it.
+    fn incoming_view<'a>(&'a self, i: &'a Incoming) -> Element<'a, Message> {
+        let addon = self.incoming_addon();
+        let name = i.name.clone().or_else(|| addon.map(|a| a.name.clone())).unwrap_or_else(|| "your preset".into());
+        let handle = self.thumbs.get(&format!("variant:{}", i.variant)).or_else(|| addon.and_then(|a| self.thumbs.get(&a.id)));
+        let thumb: Element<'a, Message> = match handle {
+            Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
+            None => Self::thumb_blank(64.0),
+        };
+        let (title, body, done): (String, String, bool) = match &i.state {
+            IncomingState::Downloading => (format!("Installing {name}…"), "Downloading it from the Elgato marketplace.".into(), false),
+            IncomingState::Waiting if self.signed_in => (
+                format!("Getting {name}"),
+                "The marketplace didn't hand it over yet. Click Download on the Elgato page; Pipemic picks the file up from your Downloads folder.".into(),
+                false,
+            ),
+            IncomingState::Waiting => (
+                format!("Getting {name}"),
+                "Sign in to Elgato once and Pipemic installs add-ons by itself. Or click Download on the Elgato page; Pipemic picks the file up from your Downloads folder.".into(),
+                false,
+            ),
+            IncomingState::Added(n) => (
+                format!("{n} was added"),
+                "Now add it to a channel: click the effects button under a channel's apps, then Use.".into(),
+                true,
+            ),
+            IncomingState::Failed(e) => ("Couldn't add this add-on".into(), e.clone(), true),
+        };
+        let action = button(text(if done { "OK" } else { "Cancel" }).size(13).font(SEMIBOLD))
+            .padding([7, 18])
+            .style(if done { primary_button } else { soft_button })
+            .on_press(Message::IncomingOk);
+        let body = column![
+            row![thumb, column![text(title).size(18).font(SEMIBOLD), text(body).size(12).color(DIM)].spacing(6).width(Length::Fill)]
+                .spacing(16)
+                .align_y(Alignment::Center),
+            row![Space::new().width(Length::Fill)]
+                .push((i.state == IncomingState::Waiting && !self.signed_in).then(|| {
+                    button(text(if self.signing_in { "Signing in…" } else { "Sign in to Elgato" }).size(13).font(SEMIBOLD))
+                        .padding([7, 18])
+                        .style(primary_button)
+                        .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
+                }))
+                .push(action)
+                .spacing(8),
+        ]
+        .spacing(20);
+        // Closes with its button only, so a stray click can't hide it.
+        opaque(
+            container(opaque(sheet(body.padding(24)).width(520)))
+                .center(Length::Fill)
+                .style(|_| container::background(rgba(0, 0, 0, 0.55))),
+        )
+    }
+
+    /// Show a short confirmation for a few seconds.
+    fn toast(&mut self, msg: String) -> Task<Message> {
+        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
+        self.toast = Some((id, msg));
+        Task::perform(tokio_sleep(5000), move |_| Message::ToastDone(id))
     }
 
     // ---- model helpers ---------------------------------------------------
@@ -1067,7 +1552,7 @@ impl App {
         // Two mute toggles (26 px each in compact) plus the link button (21 px).
         let body = self.faders(&cid, mixes, color, compact, !compact || inner_w >= 76.0);
 
-        card(column![header, hmeter(self.peak("channel", &cid)), app_box, body].spacing(12).padding(12))
+        card(column![header, hmeter(self.peak("channel", &cid)), app_box, self.fx_chip(c, compact), body].spacing(12).padding(12))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1514,6 +1999,260 @@ impl App {
         r.into()
     }
 
+    /// Elgato account: sign in once so Get / "Open with Wave Link" install
+    /// by themselves.
+    fn account_row<'a>(&'a self) -> Element<'a, Message> {
+        let (msg, b): (&str, Element<'a, Message>) = if self.signed_in {
+            (
+                "Signed in to Elgato: Get installs presets directly.",
+                button(text("Sign out").size(12)).padding([5, 12]).style(soft_button).on_press(Message::SignOut).into(),
+            )
+        } else {
+            (
+                "Sign in to Elgato once and Get installs presets without the website's Download button.",
+                button(text(if self.signing_in { "Signing in…" } else { "Sign in" }).size(12).font(SEMIBOLD))
+                    .padding([5, 14])
+                    .style(primary_button)
+                    .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
+                    .into(),
+            )
+        };
+        group(column![row![text(msg).size(12).color(DIM).width(Length::Fill), b].spacing(10).align_y(Alignment::Center)])
+    }
+
+    /// Marketplace add-on a preset file came from, if listed.
+    fn addon_for(&self, l: &addons::LocalPreset) -> Option<&wave_catalog::marketplace::Addon> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.runs_on_linux() && l.is(&a.name))
+    }
+
+    /// Marketplace add-on a preset name belongs to, if listed.
+    fn addon_named(&self, name: &str) -> Option<&wave_catalog::marketplace::Addon> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        let probe = addons::LocalPreset { name: name.to_string(), path: Default::default(), version: None, modified: std::time::UNIX_EPOCH };
+        list.iter().find(|a| a.runs_on_linux() && probe.is(&a.name))
+    }
+
+    /// Is the marketplace version newer than the downloaded one?
+    fn newer(latest: Option<&str>, have: Option<&str>) -> bool {
+        matches!((latest, have), (Some(l), Some(h)) if wave_catalog::is_newer(l, h))
+    }
+
+    /// Marketplace thumbnails are 2:1; `size` is the height.
+    fn thumb_blank<'a>(size: f32) -> Element<'a, Message> {
+        container(icon(icons::EQ, size * 0.45, DIM))
+            .center_y(size)
+            .center_x(size * 2.0)
+            .style(|_| container::Style { background: Some(RAIL.into()), border: border::rounded(8), ..Default::default() })
+            .into()
+    }
+
+    /// Thumbnail of the marketplace add-on a preset came from.
+    fn thumb_for<'a>(&'a self, name: &str, size: f32) -> Element<'a, Message> {
+        match self.addon_named(name).and_then(|a| self.thumbs.get(&a.id)) {
+            Some(h) => image(h.clone()).width(size * 2.0).height(size).border_radius(8).into(),
+            None => Self::thumb_blank(size),
+        }
+    }
+
+    /// Under a strip's apps: the channel's EQ (name, on/off) or "Effects".
+    fn fx_chip<'a>(&'a self, c: &Value, compact: bool) -> Element<'a, Message> {
+        let cid = c["id"].as_str().unwrap_or("").to_string();
+        let eq = &c["eq"];
+        let has = eq.is_object();
+        let on = has && eq["enabled"] != false;
+        let label = if !has {
+            if compact { "Effects".to_string() } else { "Add effect".to_string() }
+        } else if compact {
+            "EQ".to_string()
+        } else {
+            eq["name"].as_str().unwrap_or("EQ").to_string()
+        };
+        let content = row![
+            icon(icons::EQ, 14.0, if on { ON } else { DIM }),
+            text(label).size(12).color(if has { TEXT } else { DIM }).wrapping(iced::widget::text::Wrapping::None),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let hint = match (has, on) {
+            (false, _) => "Add an equalizer preset to this channel".to_string(),
+            (true, true) => format!("Equalizer “{}” is on. Click to change it.", eq["name"].as_str().unwrap_or("")),
+            (true, false) => format!("Equalizer “{}” is off. Click to change it.", eq["name"].as_str().unwrap_or("")),
+        };
+        let b = button(container(content).clip(true)).width(Length::Fill).padding([5, 8]).style(soft_button).on_press(Message::ShowFx(Some(cid)));
+        iced::widget::tooltip(b, tooltip_box(hint), iced::widget::tooltip::Position::Top).gap(6).into()
+    }
+
+    /// A channel's effects: its EQ, presets already downloaded, and the
+    /// marketplace add-ons that work on Linux (with a link to get them).
+    fn fx_sheet<'a>(&'a self, cid: &str) -> Element<'a, Message> {
+        let c = self.channel(cid);
+        let label = self.channel_label(cid);
+        let color = channel_color(cid);
+        let eq = &c["eq"];
+        let current = eq["name"].as_str().map(String::from);
+        let badge = container(icon(icons::channel_glyph(cid), 16.0, Color::WHITE)).center(30).style(move |_| container::Style {
+            background: Some(color.into()),
+            border: border::rounded(9),
+            ..Default::default()
+        });
+
+        // Current equalizer: one switch (bypass to compare); picking another
+        // preset below replaces it.
+        let eq_group: Element<'a, Message> = if eq.is_object() {
+            let on = eq["enabled"] != false;
+            let mut bands = column![].spacing(4);
+            for b in eq["band"].as_array().into_iter().flatten() {
+                let off = b["on"] == false;
+                bands = bands.push(text(format!("{}{}", addons::band_label(b), if off { " (off)" } else { "" })).size(12).color(DIM));
+            }
+            let c1 = cid.to_string();
+            let name = current.clone().unwrap_or_default();
+            group(column![
+                row![
+                    self.thumb_for(&name, 64.0),
+                    column![
+                        text(name.clone()).size(14).font(SEMIBOLD),
+                        text(if on { "On" } else { "Off: the sound passes unchanged" }).size(11).color(if on { ON } else { DIM }),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    toggler(on).size(18).style(switch_style).on_toggle(move |v| Message::EqEnabled(c1.clone(), v)),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+                bands,
+            ]
+            .spacing(10))
+        } else {
+            group(column![text("No equalizer on this channel. Pick a preset below.").size(12).color(DIM)])
+        };
+
+        // Downloaded presets.
+        let mut local = column![].spacing(2);
+        for p in &self.downloads {
+            let addon = self.addon_for(p);
+            // The marketplace name when known (the one inside the file can differ).
+            let shown = addon.map_or_else(|| p.name.clone(), |a| a.name.clone());
+            let using = current.as_deref().is_some_and(|c| c == shown || c == p.name);
+            let update = addon.is_some_and(|a| Self::newer(a.version.as_deref(), p.version.as_deref()));
+            let mut info = column![text(shown.clone()).size(13)].spacing(2).width(Length::Fill);
+            if update {
+                info = info.push(text("Update available in the marketplace").size(11).color(ACCENT));
+            }
+            let thumb: Element<'a, Message> = match addon.and_then(|a| self.thumbs.get(&a.id)) {
+                Some(h) => image(h.clone()).width(96).height(48).border_radius(8).into(),
+                None => Self::thumb_blank(48.0),
+            };
+            let mut line = row![thumb, info].spacing(10).align_y(Alignment::Center);
+            line = if using {
+                line.push(text("In use").size(11).color(ON))
+            } else {
+                line.push(
+                    button(text("Use").size(12).font(SEMIBOLD))
+                        .padding([5, 14])
+                        .style(primary_button)
+                        .on_press(Message::EqImport(cid.to_string(), p.path.clone(), Some(shown.clone()))),
+                )
+            };
+            let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.name.clone()));
+            line = line.push(iced::widget::tooltip(del, tooltip_box("Move this preset's files to the trash".into()), iced::widget::tooltip::Position::Left).gap(6));
+            local = local.push(container(line).padding([6, 10]));
+        }
+        let local_hint = if self.downloads.is_empty() {
+            "No presets yet. Get one below: it's applied here as soon as it's downloaded.".to_string()
+        } else {
+            format!("Added presets, and EQ presets found in {}. You can also drop a preset file on this window.", addons::downloads_dir().display())
+        };
+
+        // Marketplace.
+        let waiting = self.pending.as_ref().filter(|p| p.channel == cid).map(|p| p.name.clone());
+        let market: Element<'a, Message> = match &self.addons {
+            AddonList::Idle | AddonList::Loading => text("Loading the marketplace…").size(12).color(DIM).into(),
+            AddonList::Done(Err(e)) => text(format!("Couldn't load the marketplace: {e}")).size(12).color(MUTED).into(),
+            AddonList::Done(Ok(list)) => {
+                let mut col = column![].spacing(2);
+                let mut items: Vec<_> = list.iter().filter(|a| a.runs_on_linux()).collect();
+                items.sort_by_key(|a| a.name.to_lowercase());
+                for a in items {
+                    let local = self.downloads.iter().find(|l| l.is(&a.name));
+                    let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
+                    let info = column![
+                        text(a.name.clone()).size(13).font(SEMIBOLD),
+                        text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) }).size(11).color(DIM),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill);
+                    let get = |label: &'static str| -> Element<'a, Message> {
+                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
+                        iced::widget::tooltip(
+                            b,
+                            tooltip_box("Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()),
+                            iced::widget::tooltip::Position::Left,
+                        )
+                        .gap(6)
+                        .into()
+                    };
+                    let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
+                    let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
+                        text("Waiting for the download…").size(11).color(ACCENT).into()
+                    } else if update {
+                        get("Update")
+                    } else if in_use {
+                        text("In use").size(11).color(ON).into()
+                    } else if let Some(l) = local {
+                        button(text("Use").size(12).font(SEMIBOLD))
+                            .padding([5, 14])
+                            .style(primary_button)
+                            .on_press(Message::EqImport(cid.to_string(), l.path.clone(), Some(a.name.clone())))
+                            .into()
+                    } else {
+                        get("Get")
+                    };
+                    let thumb: Element<'a, Message> = match self.thumbs.get(&a.id) {
+                        Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
+                        None => Self::thumb_blank(64.0),
+                    };
+                    col = col.push(
+                        container(row![thumb, container(info).clip(true).width(Length::Fill), action].spacing(12).align_y(Alignment::Center))
+                            .padding([6, 10]),
+                    );
+                }
+                col.into()
+            }
+        };
+
+        let mut list = column![heading("EQUALIZER"), eq_group, heading("YOUR PRESETS"), text(local_hint).size(11).color(DIM)].spacing(8);
+        if !self.downloads.is_empty() {
+            list = list.push(group(local));
+        }
+        list = list
+            .push(Space::new().height(4))
+            .push(heading("ELGATO MARKETPLACE"))
+            .push(text("EQ presets work on Linux. Plugins (Windows/macOS only) are not listed. Checked for new ones every hour.").size(11).color(DIM))
+            .push(self.account_row())
+            .push(group(column![market]));
+
+        let mut body = column![row![
+            badge,
+            column![
+                text(format!("Effects on {label}")).size(18).font(SEMIBOLD),
+                text("Shapes this channel's sound before it reaches your mixes.").size(12).color(DIM),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center)]
+        .spacing(16);
+        if let Some(e) = &self.fx_error {
+            body = body.push(text(e.clone()).size(12).color(MUTED));
+        }
+        body = body.push(scrollable(list.padding(iced::Padding::ZERO.right(12))).height(Length::Fill));
+        modal(sheet(body.padding(24)).width(600).height(660).into(), Message::ShowFx(None))
+    }
+
     fn settings_view<'a>(&'a self) -> Element<'a, Message> {
         let version = format!(
             "{} ({})",
@@ -1700,7 +2439,11 @@ impl App {
 
         let main = container(
             column![
-                row![heading("INPUTS"), Space::new().width(Length::Fill), status, gear].spacing(12).align_y(Alignment::Center),
+                row![heading("INPUTS"), Space::new().width(Length::Fill)]
+                    .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+                    .extend([status, gear.into()])
+                    .spacing(12)
+                    .align_y(Alignment::Center),
                 body,
             ]
             .spacing(12),
@@ -1709,8 +2452,12 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_| container::background(BG));
-        if self.show_settings {
+        if let Some(i) = &self.incoming {
+            stack![main, self.incoming_view(i)].into()
+        } else if self.show_settings {
             stack![main, self.settings_view()].into()
+        } else if let Some(cid) = self.fx.as_deref() {
+            stack![main, self.fx_sheet(cid)].into()
         } else if self.show_device {
             stack![main, self.device_sheet()].into()
         } else if let Some(cid) = self.open.as_deref() {

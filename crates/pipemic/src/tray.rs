@@ -14,9 +14,11 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Event {
     Show,
+    /// A `wavelink://` link from the marketplace ("Open with Wave Link").
+    Open(String),
     ToggleMute,
     Quit,
 }
@@ -118,11 +120,16 @@ fn socket_path() -> PathBuf {
 static LISTENER: OnceLock<Mutex<Option<UnixListener>>> = OnceLock::new();
 
 /// Called first thing in `main`. If another Pipemic is running, ask it to
-/// show its window and return `false` (this process should exit).
-pub fn claim_single_instance() -> bool {
+/// show its window (or open `link`) and return `false` (this process
+/// should exit).
+pub fn claim_single_instance(link: Option<&str>) -> bool {
     let path = socket_path();
     if let Ok(mut s) = UnixStream::connect(&path) {
-        let _ = s.write_all(b"show\n");
+        let msg = match link {
+            Some(l) => format!("open {}\n", l.replace('\n', "")),
+            None => "show\n".into(),
+        };
+        let _ = s.write_all(msg.as_bytes());
         return false;
     }
     let _ = std::fs::remove_file(&path); // stale socket from a crash
@@ -141,10 +148,14 @@ pub fn run() -> impl iced::futures::Stream<Item = Out> {
         if let Some(l) = LISTENER.get().and_then(|m| m.lock().ok()?.take()) {
             let mut tx = etx.clone();
             std::thread::spawn(move || {
-                for mut s in l.incoming().flatten() {
-                    let mut buf = [0u8; 16];
-                    let _ = s.read(&mut buf);
-                    let _ = tx.try_send(Event::Show);
+                for s in l.incoming().flatten() {
+                    let mut line = String::new();
+                    let _ = s.take(2048).read_to_string(&mut line);
+                    let ev = match line.trim().strip_prefix("open ") {
+                        Some(url) => Event::Open(url.trim().to_string()),
+                        None => Event::Show,
+                    };
+                    let _ = tx.try_send(ev);
                 }
             });
         }

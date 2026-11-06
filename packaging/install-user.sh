@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 cargo build --release
 bin="$HOME/.local/bin"; share="${XDG_DATA_HOME:-$HOME/.local/share}"
-install -Dm755 target/release/pipemicd target/release/pipemicctl target/release/pipemic -t "$bin"
+install -Dm755 target/release/pipemicd target/release/pipemicctl target/release/pipemic target/release/pipemic-login -t "$bin"
 install -Dm644 packaging/pipemic.desktop -t "$share/applications"
 install -Dm644 packaging/pipemic.svg packaging/pipemic-muted.svg -t "$share/icons/hicolor/scalable/apps"
 # PNGs for every standard size; small sizes use the simplified drawing.
@@ -19,6 +19,8 @@ fi
 mkdir -p "$share/pipemic" && pwd > "$share/pipemic/source"   # for the in-app update check
 install -Dm644 systemd/pipemicd.service -t "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 update-desktop-database "$share/applications" 2>/dev/null || true
+# Marketplace "Open with Wave Link" links open Pipemic (no Wave Link on Linux).
+xdg-mime default pipemic.desktop x-scheme-handler/wavelink x-scheme-handler/wavelink-v2 >/dev/null 2>&1 || true
 gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
 # Remove the install from before the rename (wavelink / wavelinkd / wavectl).

@@ -12,6 +12,7 @@
 //! Everything in PipeWire is owned by this process and disappears on exit.
 
 mod control;
+mod eq;
 mod links;
 mod meter;
 mod mic;
@@ -57,6 +58,8 @@ struct Outcome {
     installed: bool,
     /// output_fallback changed.
     fallback: bool,
+    /// Channel whose effects (EQ) changed.
+    fx: Option<usize>,
 }
 
 /// Apps for the picker: running ones, then (if asked) every installed app,
@@ -170,6 +173,30 @@ fn apply(cfg: &mut Config, graph: &Graph, req: Request) -> Result<Outcome> {
             }
             o
         }
+        Request::Eq { channel, import, name, set, enabled, clear } => {
+            let ci = cfg.channel_index(&channel)?;
+            let c = &mut cfg.channels[ci];
+            if clear {
+                c.eq = None;
+            }
+            if let Some(eq) = set {
+                eq.validate()?;
+                c.eq = Some(eq);
+            }
+            if let Some(path) = import {
+                let xml = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+                let mut e = eq::Equalizer::from_elgato_xml(&xml).with_context(|| format!("importing {path}"))?;
+                // The marketplace name; the one inside a preset can differ.
+                if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
+                    e.name = n.trim().to_string();
+                }
+                c.eq = Some(e);
+            }
+            if let Some(on) = enabled {
+                c.eq.as_mut().context("this channel has no equalizer")?.enabled = on;
+            }
+            Outcome { save: true, fx: Some(ci), ..Default::default() }
+        }
         Request::Route { mix, channel, volume, mute } => {
             let mi = cfg.mix_index(&mix)?;
             cfg.channel_index(&channel)?;
@@ -282,14 +309,31 @@ fn main() -> Result<()> {
         });
     }
 
+    // Effects: every channel passes through its fx node (EQ) on the way to
+    // the mixes and meters.
+    for ch in &cfg.channels {
+        load_module(&context, "libpipewire-module-filter-chain", &Config::fx_args(ch))
+            .with_context(|| format!("effects for {}", ch.id))?;
+        for pos in Config::sides(ch) {
+            let (out_node, out_port) = match &ch.device {
+                None => (Config::sink_node_name(ch), format!("monitor_{pos}")),
+                Some(_) => (Config::bridge_node_name(ch), format!("output_{pos}")),
+            };
+            wants.push(Want { out_node: NodeMatch::Exact(out_node), out_ports: vec![out_port], in_node: Config::fx_in_node_name(ch), in_port: format!("input_{pos}") });
+        }
+    }
+    // A channel's audio as the mixes see it: fx output port for side L / R
+    // (mono channels feed both).
+    let fx_out = |ch: &model::Channel, side: usize| {
+        let sides = Config::sides(ch);
+        (NodeMatch::Exact(Config::fx_node_name(ch)), vec![format!("output_{}", sides[side.min(sides.len() - 1)])])
+    };
+
     // Wiring: every channel into every mix (gain decides what's audible).
     for m in &cfg.mixes {
         for (i, ch) in cfg.channels.iter().enumerate() {
-            for (side, pos) in ["FL", "FR"].iter().enumerate() {
-                let (out_node, out_ports) = match &ch.device {
-                    None => (NodeMatch::Exact(Config::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
-                    Some(_) => (NodeMatch::Exact(Config::bridge_node_name(ch)), vec!["output_MONO".to_owned()]),
-                };
+            for side in 0..2 {
+                let (out_node, out_ports) = fx_out(ch, side);
                 wants.push(Want { out_node, out_ports, in_node: Config::mix_in_node_name(m), in_port: Config::mix_in_port(i, side) });
             }
         }
@@ -305,11 +349,8 @@ fn main() -> Result<()> {
     let meter = meter::Meter::start(&core, taps).context("meter stream")?;
     let app_meter = meter::Probe::start(&core, meter::APP_NODE_NAME, "Pipemic app activity", meter::APP_SLOTS).context("app meter stream")?;
     for (i, ch) in cfg.channels.iter().enumerate() {
-        for (side, pos) in ["FL", "FR"].iter().enumerate() {
-            let (out_node, out_ports) = match &ch.device {
-                None => (NodeMatch::Exact(Config::sink_node_name(ch)), vec![format!("monitor_{pos}")]),
-                Some(_) => (NodeMatch::Exact(Config::bridge_node_name(ch)), vec!["output_MONO".to_owned()]),
-            };
+        for side in 0..2 {
+            let (out_node, out_ports) = fx_out(ch, side);
             wants.push(Want { out_node, out_ports, in_node: meter::NODE_NAME.into(), in_port: meter::in_port(i, side) });
         }
     }
@@ -323,7 +364,7 @@ fn main() -> Result<()> {
             });
         }
     }
-    let bind: Vec<String> = cfg.mixes.iter().map(Config::mix_in_node_name).collect();
+    let bind: Vec<String> = cfg.mixes.iter().map(Config::mix_in_node_name).chain(cfg.channels.iter().map(Config::fx_in_node_name)).collect();
     let pins = cfg
         .mixes
         .iter()
@@ -349,6 +390,9 @@ fn main() -> Result<()> {
             let r = apply(&mut c, &graph, req).and_then(|o| {
                 for &mi in &o.gains {
                     graph.set_controls(&Config::mix_in_node_name(&c.mixes[mi]), &c.mix_controls(mi))?;
+                }
+                if let Some(ci) = o.fx {
+                    graph.set_controls(&Config::fx_in_node_name(&c.channels[ci]), &Config::fx_controls(&c.channels[ci]))?;
                 }
                 if o.rules {
                     graph.set_router(c.router());

@@ -285,6 +285,7 @@ pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog:
         let _ = save_session(&session);
     }
     let (dl, _) = result?;
+    let product = dl.product_name.trim().to_string();
     let text = String::from_utf8(dl.bytes).map_err(|_| InstallError::Other(format!("{} isn't an EQ preset", dl.product_name)))?;
     let name = preset_name(&text).ok_or_else(|| InstallError::Other(format!("{} isn't an EQ preset Pipemic can use", dl.product_name)))?;
     // Named after the marketplace product ("<name>-<version>.xml") so the
@@ -294,7 +295,8 @@ pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog:
     std::fs::create_dir_all(&dir).map_err(|e| InstallError::Other(e.to_string()))?;
     let path = dir.join(file);
     std::fs::write(&path, text).map_err(|e| InstallError::Other(e.to_string()))?;
-    Ok((name, path))
+    // The marketplace name reads better than the one inside the file.
+    Ok((if product.is_empty() { name } else { product }, path))
 }
 
 /// Letters, digits, spaces and a few safe signs; never a path.

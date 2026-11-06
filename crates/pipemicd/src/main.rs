@@ -173,7 +173,7 @@ fn apply(cfg: &mut Config, graph: &Graph, req: Request) -> Result<Outcome> {
             }
             o
         }
-        Request::Eq { channel, import, set, enabled, clear } => {
+        Request::Eq { channel, import, name, set, enabled, clear } => {
             let ci = cfg.channel_index(&channel)?;
             let c = &mut cfg.channels[ci];
             if clear {
@@ -185,7 +185,12 @@ fn apply(cfg: &mut Config, graph: &Graph, req: Request) -> Result<Outcome> {
             }
             if let Some(path) = import {
                 let xml = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-                c.eq = Some(eq::Equalizer::from_elgato_xml(&xml).with_context(|| format!("importing {path}"))?);
+                let mut e = eq::Equalizer::from_elgato_xml(&xml).with_context(|| format!("importing {path}"))?;
+                // The marketplace name; the one inside a preset can differ.
+                if let Some(n) = name.filter(|n| !n.trim().is_empty()) {
+                    e.name = n.trim().to_string();
+                }
+                c.eq = Some(e);
             }
             if let Some(on) = enabled {
                 c.eq.as_mut().context("this channel has no equalizer")?.enabled = on;

@@ -562,7 +562,8 @@ enum Message {
     AddonsDone(Result<Vec<wave_catalog::marketplace::Addon>, String>),
     Downloads(Vec<addons::LocalPreset>),
     /// Put an EQ preset file on a channel.
-    EqImport(String, std::path::PathBuf),
+    /// (channel, file, name to show)
+    EqImport(String, std::path::PathBuf, Option<String>),
     EqEnabled(String, bool),
     EqDone(Result<Value, String>),
     /// Install an add-on (signed in), else open its page and apply its file
@@ -1050,7 +1051,7 @@ impl App {
                         self.pending = None;
                         let (c, path) = (p.channel.clone(), addons::add_to_library(&l.path).unwrap_or_else(|_| l.path.clone()));
                         let msg = format!("{} added to {}", l.name, self.channel_label(&p.channel));
-                        return Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path})), Message::EqDone)
+                        return Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": p.name})), Message::EqDone)
                             .chain(self.toast(msg));
                     } else if p.since.elapsed().is_ok_and(|e| e > Duration::from_secs(900)) {
                         self.pending = None; // gave up waiting
@@ -1156,7 +1157,7 @@ impl App {
                         let msg = format!("{name} added to {}", self.channel_label(&c));
                         return Task::batch([
                             rescan,
-                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path})), Message::EqDone).chain(self.toast(msg)),
+                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path, "name": name})), Message::EqDone).chain(self.toast(msg)),
                         ]);
                     }
                     (false, Err(InstallError::Other(e))) => {
@@ -1215,8 +1216,8 @@ impl App {
                     self.toast = None;
                 }
             }
-            Message::EqImport(c, path) => {
-                let req = json!({"cmd": "eq", "channel": c, "import": path});
+            Message::EqImport(c, path, name) => {
+                let req = json!({"cmd": "eq", "channel": c, "import": path, "name": name});
                 return Task::perform(send(req), Message::EqDone);
             }
             Message::EqEnabled(c, on) => return Task::perform(send(json!({"cmd": "eq", "channel": c, "enabled": on})), Message::EqDone),
@@ -1229,7 +1230,7 @@ impl App {
             },
             Message::FileDropped(p) => {
                 if let Some(c) = self.fx.clone() {
-                    return self.update(Message::EqImport(c, p));
+                    return self.update(Message::EqImport(c, p, None));
                 }
             }
             Message::SetOutput(mix, o) => {
@@ -2019,6 +2020,12 @@ impl App {
         group(column![row![text(msg).size(12).color(DIM).width(Length::Fill), b].spacing(10).align_y(Alignment::Center)])
     }
 
+    /// Marketplace add-on a preset file came from, if listed.
+    fn addon_for(&self, l: &addons::LocalPreset) -> Option<&wave_catalog::marketplace::Addon> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.runs_on_linux() && l.is(&a.name))
+    }
+
     /// Marketplace add-on a preset name belongs to, if listed.
     fn addon_named(&self, name: &str) -> Option<&wave_catalog::marketplace::Addon> {
         let AddonList::Done(Ok(list)) = &self.addons else { return None };
@@ -2124,13 +2131,20 @@ impl App {
         // Downloaded presets.
         let mut local = column![].spacing(2);
         for p in &self.downloads {
-            let using = current.as_deref() == Some(p.name.as_str());
-            let update = self.addon_named(&p.name).is_some_and(|a| Self::newer(a.version.as_deref(), p.version.as_deref()));
-            let mut info = column![text(p.name.clone()).size(13)].spacing(2).width(Length::Fill);
+            let addon = self.addon_for(p);
+            // The marketplace name when known (the one inside the file can differ).
+            let shown = addon.map_or_else(|| p.name.clone(), |a| a.name.clone());
+            let using = current.as_deref().is_some_and(|c| c == shown || c == p.name);
+            let update = addon.is_some_and(|a| Self::newer(a.version.as_deref(), p.version.as_deref()));
+            let mut info = column![text(shown.clone()).size(13)].spacing(2).width(Length::Fill);
             if update {
                 info = info.push(text("Update available in the marketplace").size(11).color(ACCENT));
             }
-            let mut line = row![self.thumb_for(&p.name, 48.0), info].spacing(10).align_y(Alignment::Center);
+            let thumb: Element<'a, Message> = match addon.and_then(|a| self.thumbs.get(&a.id)) {
+                Some(h) => image(h.clone()).width(96).height(48).border_radius(8).into(),
+                None => Self::thumb_blank(48.0),
+            };
+            let mut line = row![thumb, info].spacing(10).align_y(Alignment::Center);
             line = if using {
                 line.push(text("In use").size(11).color(ON))
             } else {
@@ -2138,7 +2152,7 @@ impl App {
                     button(text("Use").size(12).font(SEMIBOLD))
                         .padding([5, 14])
                         .style(primary_button)
-                        .on_press(Message::EqImport(cid.to_string(), p.path.clone())),
+                        .on_press(Message::EqImport(cid.to_string(), p.path.clone(), Some(shown.clone()))),
                 )
             };
             let del = button(text("Delete").size(12).color(DIM)).padding([5, 10]).style(flat_button(false, MUTED)).on_press(Message::DeleteLocal(p.name.clone()));
@@ -2179,12 +2193,19 @@ impl App {
                         .gap(6)
                         .into()
                     };
+                    let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
                     let action: Element<'a, Message> = if waiting.as_deref() == Some(a.name.as_str()) {
                         text("Waiting for the download…").size(11).color(ACCENT).into()
                     } else if update {
                         get("Update")
-                    } else if local.is_some() {
-                        text("Downloaded").size(11).color(DIM).into()
+                    } else if in_use {
+                        text("In use").size(11).color(ON).into()
+                    } else if let Some(l) = local {
+                        button(text("Use").size(12).font(SEMIBOLD))
+                            .padding([5, 14])
+                            .style(primary_button)
+                            .on_press(Message::EqImport(cid.to_string(), l.path.clone(), Some(a.name.clone())))
+                            .into()
                     } else {
                         get("Get")
                     };

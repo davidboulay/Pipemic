@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Build, test, Clippy
+    runs-on: ubuntu-latest
+    # Arch, like the machine Pipemic is developed on: current PipeWire headers and Rust stable.
+    container: archlinux:latest
+    steps:
+      - name: System packages
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf \
+            libpipewire libusb gtk3 webkit2gtk-4.1
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-
+      - name: Build
+        run: cargo build --workspace --all-targets --locked
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

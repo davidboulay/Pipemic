@@ -288,34 +288,6 @@ fn set_source_mute(name: &str, mute: bool) -> bool {
     pactl(&["set-source-mute", name, if mute { "1" } else { "0" }]).is_some()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hardware_wins_on_new_node() {
-        assert_eq!(mute_action(None, false, true), MuteAction::SetPipeWire(false));
-        assert_eq!(mute_action(None, true, false), MuteAction::SetPipeWire(true));
-    }
-
-    #[test]
-    fn pad_tap_goes_to_pipewire() {
-        // last sync: both unmuted; pad tapped -> hw muted
-        assert_eq!(mute_action(Some(false), true, false), MuteAction::SetPipeWire(true));
-    }
-
-    #[test]
-    fn desktop_mute_goes_to_mic() {
-        assert_eq!(mute_action(Some(false), false, true), MuteAction::SetHardware(true));
-        assert_eq!(mute_action(Some(true), true, false), MuteAction::SetHardware(false));
-    }
-
-    #[test]
-    fn in_sync_does_nothing() {
-        assert_eq!(mute_action(Some(true), true, true), MuteAction::None);
-        assert_eq!(mute_action(None, false, false), MuteAction::None);
-    }
-}
 
 fn refresh(dev: &mut Option<Wave3>, state: &Mutex<MicState>) {
     let Some(d) = dev.as_ref() else { return };
@@ -363,4 +335,33 @@ fn is_gone(e: &wave_proto::RusbError) -> bool {
             | wave_proto::RusbError::Io
             | wave_proto::RusbError::NotFound
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hardware_wins_on_new_node() {
+        assert_eq!(mute_action(None, false, true), MuteAction::SetPipeWire(false));
+        assert_eq!(mute_action(None, true, false), MuteAction::SetPipeWire(true));
+    }
+
+    #[test]
+    fn pad_tap_goes_to_pipewire() {
+        // last sync: both unmuted; pad tapped -> hw muted
+        assert_eq!(mute_action(Some(false), true, false), MuteAction::SetPipeWire(true));
+    }
+
+    #[test]
+    fn desktop_mute_goes_to_mic() {
+        assert_eq!(mute_action(Some(false), false, true), MuteAction::SetHardware(true));
+        assert_eq!(mute_action(Some(true), true, false), MuteAction::SetHardware(false));
+    }
+
+    #[test]
+    fn in_sync_does_nothing() {
+        assert_eq!(mute_action(Some(true), true, true), MuteAction::None);
+        assert_eq!(mute_action(None, false, false), MuteAction::None);
+    }
 }

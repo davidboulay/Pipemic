@@ -5,6 +5,7 @@
 An open-source alternative to Elgato Wave Link, built on PipeWire.</p>
 
 <p align="center">
+  <a href="https://github.com/davidboulay/pipemic/actions/workflows/ci.yml"><img src="https://github.com/davidboulay/pipemic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/davidboulay/pipemic/releases"><img src="https://img.shields.io/github/v/release/davidboulay/pipemic?color=0a84ff" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-30d158" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Linux-PipeWire%201.x-ffd60a" alt="Linux, PipeWire 1.x">
@@ -171,7 +172,7 @@ Issues and pull requests are welcome.
 ```sh
 cargo build                 # all crates
 cargo test                  # unit tests (protocol, mixer model, catalog, app categories)
-cargo clippy --workspace    # lints
+cargo clippy --workspace --all-targets -- -D warnings   # lints, as CI runs them
 ./packaging/install-user.sh # install your build and restart it
 ```
 

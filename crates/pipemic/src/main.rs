@@ -2244,9 +2244,9 @@ impl App {
                     };
                     let in_use = local.is_some() && current.as_deref().is_some_and(|c| c == a.name || local.is_some_and(|l| l.name == c));
                     let action: Element<'a, Message> = if added {
-                        text(format!("Added to {label}")).size(12).font(SEMIBOLD).color(ON).into()
+                        text("Added").size(11).color(ON).into()
                     } else if self.installing.as_deref() == Some(a.name.as_str()) {
-                        text("Installing…").size(12).color(ACCENT).into()
+                        text("Installing…").size(11).color(ACCENT).into()
                     } else if waiting.as_deref() == Some(a.name.as_str()) {
                         row![
                             text("Waiting for the download…").size(11).color(ACCENT),

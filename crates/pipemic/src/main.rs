@@ -2272,8 +2272,10 @@ impl App {
             ]
             .spacing(2)
             .width(Length::Fill),
-            button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)),
         ]
+        // Notices about add-ons ("… added to Microphone") show here, not behind the sheet.
+        .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+        .push(button(text("Done").size(13).font(SEMIBOLD)).padding([7, 16]).style(soft_button).on_press(Message::ShowFx(None)))
         .spacing(12)
         .align_y(Alignment::Center)]
         .spacing(16);
@@ -2471,7 +2473,7 @@ impl App {
         let main = container(
             column![
                 row![heading("INPUTS"), Space::new().width(Length::Fill)]
-                    .push(self.toast.as_ref().map(|(_, m)| text(m.clone()).size(12).color(ON)))
+                    .push(self.toast.as_ref().filter(|_| self.fx.is_none()).map(|(_, m)| text(m.clone()).size(12).color(ON)))
                     .extend([status, gear.into()])
                     .spacing(12)
                     .align_y(Alignment::Center),

@@ -1,0 +1,11 @@
+[package]
+name = "pipemic-login"
+description = "Sign-in window for the Elgato marketplace (keeps the website session for add-on downloads)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wry = "0.53"
+tao = "0.34"
+serde_json = "1"

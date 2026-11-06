@@ -143,5 +143,16 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Wayland: winit's focus_window is a no-op, so a marketplace link reopens the window (closed + new) unless it has focus; new windows come to the front on KDE.
 - Probing Elgato's gateway for an unauthenticated download URL was stopped (treated as getting around their
   login). Don't retry; downloads stay with the user's browser.
-- Not yet verified end to end: the auto-apply after a real browser download (needs the user's login).
+- Elgato sign-in (user chose "option 2", 2026-11-06): `pipemic-login` (wry/WebKitGTK window, own profile in
+  `~/.local/share/pipemic/webview`; private mode dropped the OIDC handshake cookies) shows Elgato's own sign-in
+  (Keycloak realm `mp`, Google SSO works) and saves the marketplace cookies (`kc_user`, `__Host-kc_at`,
+  `__Secure-kc_rt` (path-scoped, so read with `cookies()` not `cookies_for_url`)) to
+  `~/.local/share/pipemic/elgato-session.json` (0600). Downloads do what the website's Download button does:
+  `GET marketplace.elgato.com/api/proxy/purchase-link/<variant>` with the cookies -> `{direct_link (signed
+  mp-cdn URL), product_name, version_number, file_size, metadata.{win,mac}_destination_path, deep_link}`, then GET
+  `direct_link`. Public `mp-gateway.elgato.com/allitems?ids=<variant>` gives name/thumbnail without sign-in.
+  Set-Cookie renewals are merged; 401/403 signs out. Verified: a `wavelink://` link installed "EQ for Female
+  Vocal Range" into the library with no browser Download click.
+- Not yet verified: session lifetime (when `__Host-kc_at` expires, does the proxy refresh from `kc_rt`?), Get for
+  a preset not yet in the user's library (expected: falls back to the product page).
 - Open: what's inside the 20 single-variant marketplace plugins (Linux build or not). Editing bands by hand.

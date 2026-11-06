@@ -4,7 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 cargo build --release
 bin="$HOME/.local/bin"; share="${XDG_DATA_HOME:-$HOME/.local/share}"
-install -Dm755 target/release/pipemicd target/release/pipemicctl target/release/pipemic -t "$bin"
+install -Dm755 target/release/pipemicd target/release/pipemicctl target/release/pipemic target/release/pipemic-login -t "$bin"
 install -Dm644 packaging/pipemic.desktop -t "$share/applications"
 install -Dm644 packaging/pipemic.svg packaging/pipemic-muted.svg -t "$share/icons/hicolor/scalable/apps"
 # PNGs for every standard size; small sizes use the simplified drawing.

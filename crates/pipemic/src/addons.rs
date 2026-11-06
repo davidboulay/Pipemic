@@ -64,7 +64,7 @@ pub fn preset_name(xml: &str) -> Option<String> {
     let q = tag[j..].chars().next()?;
     let rest = &tag[j + 1..];
     let name = &rest[..rest.find(q)?];
-    Some(name.replace("&amp;", "&").replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">"))
+    Some(name.trim().replace("&amp;", "&").replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">"))
 }
 
 /// Pipemic's preset library: presets added from the marketplace.
@@ -195,6 +195,80 @@ fn thumbnail(dir: &Path, id: String, url: String) -> Option<(String, Vec<u8>)> {
             Some((id, b))
         })
         .next()
+}
+
+// ---- Elgato account (website session from pipemic-login) -----------------
+
+fn data_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")).join("pipemic")
+}
+
+fn session_path() -> PathBuf {
+    data_dir().join("elgato-session.json")
+}
+
+/// The saved marketplace session, if signed in.
+pub fn load_session() -> Option<wave_catalog::marketplace::Session> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(session_path()).ok()?).ok()?;
+    let cookies: Vec<(String, String)> = v["cookies"]
+        .as_array()?
+        .iter()
+        .filter_map(|c| Some((c["name"].as_str()?.to_string(), c["value"].as_str()?.to_string())))
+        .collect();
+    (!cookies.is_empty()).then_some(wave_catalog::marketplace::Session { cookies })
+}
+
+fn save_session(s: &wave_catalog::marketplace::Session) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = session_path();
+    let tmp = path.with_extension("json.tmp");
+    let body = serde_json::json!({
+        "cookies": s.cookies.iter().map(|(n, v)| serde_json::json!({"name": n, "value": v})).collect::<Vec<_>>(),
+    });
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|e| e.to_string())?;
+    f.write_all(body.to_string().as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+pub fn signed_in() -> bool {
+    session_path().exists()
+}
+
+/// Show the sign-in window and wait for it. Ok(true) = signed in.
+pub fn sign_in() -> Result<bool, String> {
+    let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("pipemic-login")));
+    let exe = exe.filter(|p| p.exists()).unwrap_or_else(|| PathBuf::from("pipemic-login"));
+    let st = std::process::Command::new(exe).status().map_err(|e| format!("couldn't open the sign-in window: {e}"))?;
+    Ok(st.success() && signed_in())
+}
+
+/// Forget the session and the sign-in window's browser profile.
+pub fn sign_out() {
+    let _ = std::fs::remove_file(session_path());
+    let _ = std::fs::remove_dir_all(data_dir().join("webview"));
+}
+
+/// Download add-on variant `variant` with the session and add it to the
+/// preset library. Returns (preset name, library path).
+pub fn install_variant(variant: &str) -> Result<(String, PathBuf), wave_catalog::marketplace::InstallError> {
+    use wave_catalog::marketplace::{download_variant, InstallError};
+    let mut session = load_session().ok_or(InstallError::SignIn)?;
+    let result = download_variant(&mut session, variant);
+    if let Ok((_, true)) = &result {
+        let _ = save_session(&session);
+    }
+    let (dl, _) = result?;
+    let text = String::from_utf8(dl.bytes).map_err(|_| InstallError::Other(format!("{} isn't an EQ preset", dl.product_name)))?;
+    let name = preset_name(&text).ok_or_else(|| InstallError::Other(format!("{} isn't an EQ preset Pipemic can use", dl.product_name)))?;
+    let file: String = dl.file_name.chars().filter(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c)).collect();
+    let file = if file.to_lowercase().ends_with(".xml") { file } else { format!("{file}.xml") };
+    let dir = library_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| InstallError::Other(e.to_string()))?;
+    let path = dir.join(file);
+    std::fs::write(&path, text).map_err(|e| InstallError::Other(e.to_string()))?;
+    Ok((name, path))
 }
 
 /// Open a web page in the user's browser.

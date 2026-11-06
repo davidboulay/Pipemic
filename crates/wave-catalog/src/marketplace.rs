@@ -83,6 +83,124 @@ pub fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("marketplace: {e}"))
 }
 
+/// A signed-in marketplace website session: its cookies, as the sign-in
+/// window (`pipemic-login`) saved them.
+#[derive(Debug, Clone, Default)]
+pub struct Session {
+    pub cookies: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstallError {
+    /// No session, or the website no longer accepts it.
+    SignIn,
+    /// The website wouldn't hand out the file (e.g. not in the library yet).
+    NotOwned,
+    Other(String),
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignIn => f.write_str("sign in to Elgato first"),
+            Self::NotOwned => f.write_str("get it on the marketplace first"),
+            Self::Other(e) => f.write_str(e),
+        }
+    }
+}
+
+/// An add-on file fetched through the user's session.
+#[derive(Debug, Clone)]
+pub struct Download {
+    pub product_name: String,
+    /// File name from the download link, e.g. "Old_Radio-1.0.0.xml".
+    pub file_name: String,
+    pub bytes: Vec<u8>,
+}
+
+impl Session {
+    fn header(&self) -> String {
+        self.cookies.iter().filter(|(n, _)| !n.starts_with("__stripe")).map(|(n, v)| format!("{n}={v}")).collect::<Vec<_>>().join("; ")
+    }
+
+    /// Take cookies the website renewed (Set-Cookie) into the session.
+    fn update(&mut self, set_cookies: &[String]) -> bool {
+        let mut changed = false;
+        for sc in set_cookies {
+            let Some((name, rest)) = sc.split_once('=') else { continue };
+            let value = rest.split(';').next().unwrap_or("").to_string();
+            let name = name.trim().to_string();
+            match self.cookies.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, v)) if *v != value => {
+                    *v = value;
+                    changed = true;
+                }
+                None => {
+                    self.cookies.push((name, value));
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+}
+
+/// Fetch add-on variant `variant` the way the website's Download button
+/// does: ask `purchase-link` with the session, then download the signed
+/// CDN link. Returns the file and whether the session's cookies changed.
+pub fn download_variant(session: &mut Session, variant: &str) -> Result<(Download, bool), InstallError> {
+    if session.cookies.is_empty() {
+        return Err(InstallError::SignIn);
+    }
+    if variant.is_empty() || !variant.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(InstallError::Other(format!("bad add-on id {variant:?}")));
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut resp = agent
+        .get(&format!("{SITE}/api/proxy/purchase-link/{variant}"))
+        .header("Cookie", &session.header())
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|e| InstallError::Other(format!("marketplace: {e}")))?;
+    let set: Vec<String> = resp.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+    let changed = session.update(&set);
+    let status = resp.status().as_u16();
+    let body = resp.body_mut().read_to_string().unwrap_or_default();
+    match status {
+        200 => {}
+        401 | 403 => return Err(InstallError::SignIn),
+        404 | 400 | 402 => return Err(InstallError::NotOwned),
+        s => return Err(InstallError::Other(format!("marketplace answered {s}"))),
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| InstallError::Other("marketplace reply is not JSON".into()))?;
+    let link = v["direct_link"].as_str().ok_or(InstallError::NotOwned)?;
+    if !link.starts_with("https://mp-cdn.elgato.com/") {
+        return Err(InstallError::Other("unexpected download host".into()));
+    }
+    let file_name = link.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or("addon").to_string();
+    let bytes = ureq::get(link)
+        .call()
+        .map_err(|e| InstallError::Other(format!("download: {e}")))?
+        .body_mut()
+        .with_config()
+        .limit(64 * 1024 * 1024)
+        .read_to_vec()
+        .map_err(|e| InstallError::Other(format!("download: {e}")))?;
+    Ok((Download { product_name: v["product_name"].as_str().unwrap_or("").to_string(), file_name, bytes }, changed))
+}
+
+/// Name and thumbnail of an add-on variant (public, no sign-in).
+pub fn variant_info(variant: &str) -> Result<(String, Option<String>), String> {
+    let body = get_string(&format!("{API}/allitems?ids={variant}"))?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|_| "marketplace reply is not JSON".to_string())?;
+    let it = v.as_array().and_then(|a| a.first()).ok_or("unknown add-on")?;
+    Ok((
+        it["product_name"].as_str().or(it["name"].as_str()).unwrap_or("").to_string(),
+        it["thumbnail_cdn"].as_str().map(String::from),
+    ))
+}
+
 /// `latest_version_number` of a product's default (else first) variant.
 pub fn latest_version(details: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(details).ok()?;
@@ -150,6 +268,17 @@ mod tests {
         assert!(next.unwrap().ends_with("offset=1"));
         assert_eq!(a[0].thumbnail, None);
         assert_eq!(a[0].variant_ids, ["v1"]);
+    }
+
+    #[test]
+    fn session_cookies() {
+        let mut s = Session { cookies: vec![("kc_user".into(), "u".into()), ("__Host-kc_at".into(), "a1".into()), ("__stripe_mid".into(), "x".into())] };
+        assert_eq!(s.header(), "kc_user=u; __Host-kc_at=a1");
+        assert!(s.update(&["__Host-kc_at=a2; Path=/; Secure; HttpOnly".into()]));
+        assert!(!s.update(&["__Host-kc_at=a2; Path=/".into()]));
+        assert_eq!(s.cookies[1].1, "a2");
+        assert_eq!(download_variant(&mut Session::default(), "abc").unwrap_err(), InstallError::SignIn);
+        assert!(matches!(download_variant(&mut s, "../x"), Err(InstallError::Other(_))));
     }
 
     #[test]

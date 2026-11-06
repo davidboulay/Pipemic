@@ -565,8 +565,20 @@ enum Message {
     EqImport(String, std::path::PathBuf),
     EqEnabled(String, bool),
     EqDone(Result<Value, String>),
-    /// Open an add-on's page and apply its file once it's downloaded.
-    Get { name: String, url: String },
+    /// Install an add-on (signed in), else open its page and apply its file
+    /// once it's downloaded.
+    Get { name: String, url: String, variant: Option<String> },
+    /// A signed-in download finished; `channel` = apply it there.
+    Installed {
+        variant: String,
+        channel: Option<String>,
+        url: Option<String>,
+        result: Result<(String, std::path::PathBuf), wave_catalog::marketplace::InstallError>,
+    },
+    IncomingInfo(String, Result<(String, Option<String>), String>),
+    SignIn,
+    SignedIn(Result<bool, String>),
+    SignOut,
     ThumbsDone(Vec<(String, Vec<u8>)>),
     /// Move every file of this preset (library and Downloads) to the trash.
     DeleteLocal(String),
@@ -587,11 +599,17 @@ enum Message {
 struct Incoming {
     /// Variant id from the link.
     variant: String,
+    /// Name and thumbnail key, once looked up.
+    name: Option<String>,
     state: IncomingState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum IncomingState {
+    /// Downloading through the signed-in session.
+    Downloading,
+    /// Waiting for the user's own download (not signed in, or the website
+    /// wouldn't hand the file to the session).
     Waiting,
     Added(String),
     Failed(String),
@@ -658,6 +676,10 @@ struct App {
     incoming: Option<Incoming>,
     /// The mixer window has keyboard focus.
     focused: bool,
+    /// Signed in to the Elgato marketplace (pipemic-login session).
+    signed_in: bool,
+    /// The sign-in window is open.
+    signing_in: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -721,7 +743,7 @@ impl App {
             show_device: view == "device" || view == "device-info",
             device_tab: (view == "device-info") as u8,
             show_settings: view == "settings",
-            open: view.strip_prefix("picker:").map(String::from), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
+            open: view.strip_prefix("picker:").map(String::from), signed_in: addons::signed_in(), prefs: Some(prefs), autostart: settings::autostart(), update: Some(UpdateState::Idle), ..Self::default() };
         let mut app = app;
         if app.autostart {
             // Refresh older entries (Exec=pipemic) so login starts in the tray.
@@ -1035,7 +1057,18 @@ impl App {
                     }
                 }
             }
-            Message::Get { name, url } => {
+            Message::Get { name, url, variant } => {
+                if let (true, Some(v)) = (self.signed_in, variant) {
+                    let channel = self.fx.clone();
+                    self.fx_error = None;
+                    self.toast_now(format!("Installing {name}…"));
+                    return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                        variant: String::new(),
+                        channel: channel.clone(),
+                        url: Some(url.clone()),
+                        result,
+                    });
+                }
                 if let Some(c) = self.fx.clone() {
                     self.pending = Some(Pending { channel: c, name, since: std::time::SystemTime::now() });
                 }
@@ -1055,19 +1088,130 @@ impl App {
                 let Some(variant) = addons::preset_link(&url) else {
                     self.incoming = Some(Incoming {
                         variant: String::new(),
+                        name: None,
                         state: IncomingState::Failed("This add-on is a plugin. Pipemic can use EQ presets only.".into()),
                     });
                     return show;
                 };
-                self.incoming = Some(Incoming { variant, state: IncomingState::Waiting });
+                let state = if self.signed_in { IncomingState::Downloading } else { IncomingState::Waiting };
+                self.incoming = Some(Incoming { variant: variant.clone(), name: None, state });
                 self.fx = None;
-                let mut t = vec![show, Task::perform(blocking(addons::scan_downloads), Message::Downloads)];
+                let v = variant.clone();
+                let mut t = vec![
+                    show,
+                    Task::perform(blocking(addons::scan_downloads), Message::Downloads),
+                    Task::perform(blocking(move || wave_catalog::marketplace::variant_info(&v)), {
+                        let v = variant.clone();
+                        move |r| Message::IncomingInfo(v.clone(), r)
+                    }),
+                ];
+                if self.signed_in {
+                    let v = variant.clone();
+                    t.push(Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                        variant: variant.clone(),
+                        channel: None,
+                        url: None,
+                        result,
+                    }));
+                }
                 if !matches!(self.addons, AddonList::Done(Ok(_))) {
                     t.push(self.update(Message::RefreshAddons));
                 }
                 return Task::batch(t);
             }
             Message::IncomingOk => self.incoming = None,
+            Message::IncomingInfo(variant, r) => {
+                let Ok((name, thumb)) = r else { return Task::none() };
+                let Some(i) = self.incoming.as_mut().filter(|i| i.variant == variant) else { return Task::none() };
+                i.name = Some(name);
+                self.resolve_incoming();
+                if let Some(url) = thumb {
+                    let key = format!("variant:{variant}");
+                    if !self.thumbs.contains_key(&key) {
+                        return Task::perform(blocking(move || addons::thumbnails(vec![(key, url)])), Message::ThumbsDone);
+                    }
+                }
+            }
+            Message::Installed { variant, channel, url, result } => {
+                use wave_catalog::marketplace::InstallError;
+                let rescan = Task::perform(blocking(addons::scan_downloads), Message::Downloads);
+                let from_link = !variant.is_empty();
+                if matches!(result, Err(InstallError::SignIn)) {
+                    // The website no longer accepts the session.
+                    addons::sign_out();
+                    self.signed_in = false;
+                }
+                match (from_link, result) {
+                    (true, r) => {
+                        let Some(i) = self.incoming.as_mut().filter(|i| i.variant == variant) else { return rescan };
+                        i.state = match r {
+                            // The marketplace name reads better than the one inside the file.
+                            Ok((name, _)) => IncomingState::Added(i.name.clone().unwrap_or(name)),
+                            Err(InstallError::Other(e)) => IncomingState::Failed(e),
+                            Err(_) => IncomingState::Waiting,
+                        };
+                        self.resolve_incoming();
+                        return rescan;
+                    }
+                    (false, Ok((name, path))) => {
+                        self.toast = None;
+                        let Some(c) = channel else { return rescan };
+                        let msg = format!("{name} added to {}", self.channel_label(&c));
+                        return Task::batch([
+                            rescan,
+                            Task::perform(send(json!({"cmd": "eq", "channel": c, "import": path})), Message::EqDone).chain(self.toast(msg)),
+                        ]);
+                    }
+                    (false, Err(InstallError::Other(e))) => {
+                        self.toast = None;
+                        self.fx_error = Some(e);
+                    }
+                    // Not signed in any more, or not in the library yet: get it on the website.
+                    (false, Err(_)) => {
+                        self.toast = None;
+                        if let (Some(u), Some(c)) = (url, channel) {
+                            let name = self.addon_url_name(&u).unwrap_or_default();
+                            self.pending = Some(Pending { channel: c, name, since: std::time::SystemTime::now() });
+                            if let Err(e) = addons::open_url(&u) {
+                                self.fx_error = Some(e);
+                            }
+                        }
+                    }
+                }
+                return rescan;
+            }
+            Message::SignIn => {
+                if self.signing_in {
+                    return Task::none();
+                }
+                self.signing_in = true;
+                return Task::perform(blocking(addons::sign_in), Message::SignedIn);
+            }
+            Message::SignedIn(r) => {
+                self.signing_in = false;
+                self.signed_in = addons::signed_in();
+                if let Err(e) = r {
+                    self.fx_error = Some(e);
+                }
+                // A link was waiting for the sign-in: install it now.
+                if let (true, Some(i)) = (self.signed_in, self.incoming.as_mut()) {
+                    if i.state == IncomingState::Waiting && !i.variant.is_empty() {
+                        i.state = IncomingState::Downloading;
+                        let variant = i.variant.clone();
+                        let v = variant.clone();
+                        return Task::perform(blocking(move || addons::install_variant(&v)), move |result| Message::Installed {
+                            variant: variant.clone(),
+                            channel: None,
+                            url: None,
+                            result,
+                        });
+                    }
+                }
+            }
+            Message::SignOut => {
+                addons::sign_out();
+                self.signed_in = false;
+            }
             Message::Focus(f) => self.focused = f,
             Message::ToastDone(id) => {
                 if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
@@ -1103,6 +1247,18 @@ impl App {
         self.incoming.as_ref().is_some_and(|i| i.state == IncomingState::Waiting)
     }
 
+    /// Show a toast that stays until replaced.
+    fn toast_now(&mut self, msg: String) {
+        let id = self.toast.as_ref().map_or(0, |(i, _)| i + 1);
+        self.toast = Some((id, msg));
+    }
+
+    /// Name of the marketplace add-on with this product page.
+    fn addon_url_name(&self, url: &str) -> Option<String> {
+        let AddonList::Done(Ok(list)) = &self.addons else { return None };
+        list.iter().find(|a| a.url == url).map(|a| a.name.clone())
+    }
+
     /// The marketplace add-on an incoming link points at.
     fn incoming_addon(&self) -> Option<&wave_catalog::marketplace::Addon> {
         let i = self.incoming.as_ref()?;
@@ -1115,10 +1271,11 @@ impl App {
         if !self.waiting_link() {
             return;
         }
-        let Some(name) = self.incoming_addon().map(|a| a.name.clone()) else { return };
+        let name = self.incoming.as_ref().and_then(|i| i.name.clone()).or_else(|| self.incoming_addon().map(|a| a.name.clone()));
+        let Some(name) = name else { return };
         let Some(local) = self.downloads.iter().find(|l| l.is(&name)).cloned() else { return };
         let state = match addons::add_to_library(&local.path) {
-            Ok(_) => IncomingState::Added(local.name),
+            Ok(_) => IncomingState::Added(name),
             Err(e) => IncomingState::Failed(e),
         };
         if let Some(i) = &mut self.incoming {
@@ -1130,15 +1287,22 @@ impl App {
     /// it's added and where to use it.
     fn incoming_view<'a>(&'a self, i: &'a Incoming) -> Element<'a, Message> {
         let addon = self.incoming_addon();
-        let name = addon.map(|a| a.name.clone()).unwrap_or_else(|| "your preset".into());
-        let thumb: Element<'a, Message> = match addon.and_then(|a| self.thumbs.get(&a.id)) {
+        let name = i.name.clone().or_else(|| addon.map(|a| a.name.clone())).unwrap_or_else(|| "your preset".into());
+        let handle = self.thumbs.get(&format!("variant:{}", i.variant)).or_else(|| addon.and_then(|a| self.thumbs.get(&a.id)));
+        let thumb: Element<'a, Message> = match handle {
             Some(h) => image(h.clone()).width(128).height(64).border_radius(8).into(),
             None => Self::thumb_blank(64.0),
         };
         let (title, body, done): (String, String, bool) = match &i.state {
+            IncomingState::Downloading => (format!("Installing {name}…"), "Downloading it from the Elgato marketplace.".into(), false),
+            IncomingState::Waiting if self.signed_in => (
+                format!("Getting {name}"),
+                "The marketplace didn't hand it over yet. Click Download on the Elgato page; Pipemic picks the file up from your Downloads folder.".into(),
+                false,
+            ),
             IncomingState::Waiting => (
                 format!("Getting {name}"),
-                "Click Download on the Elgato page. Pipemic picks the file up from your Downloads folder.".into(),
+                "Sign in to Elgato once and Pipemic installs add-ons by itself. Or click Download on the Elgato page; Pipemic picks the file up from your Downloads folder.".into(),
                 false,
             ),
             IncomingState::Added(n) => (
@@ -1156,7 +1320,15 @@ impl App {
             row![thumb, column![text(title).size(18).font(SEMIBOLD), text(body).size(12).color(DIM)].spacing(6).width(Length::Fill)]
                 .spacing(16)
                 .align_y(Alignment::Center),
-            row![Space::new().width(Length::Fill), action],
+            row![Space::new().width(Length::Fill)]
+                .push((i.state == IncomingState::Waiting && !self.signed_in).then(|| {
+                    button(text(if self.signing_in { "Signing in…" } else { "Sign in to Elgato" }).size(13).font(SEMIBOLD))
+                        .padding([7, 18])
+                        .style(primary_button)
+                        .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
+                }))
+                .push(action)
+                .spacing(8),
         ]
         .spacing(20);
         // Closes with its button only, so a stray click can't hide it.
@@ -1829,6 +2001,27 @@ impl App {
         r.into()
     }
 
+    /// Elgato account: sign in once so Get / "Open with Wave Link" install
+    /// by themselves.
+    fn account_row<'a>(&'a self) -> Element<'a, Message> {
+        let (msg, b): (&str, Element<'a, Message>) = if self.signed_in {
+            (
+                "Signed in to Elgato: Get installs presets directly.",
+                button(text("Sign out").size(12)).padding([5, 12]).style(soft_button).on_press(Message::SignOut).into(),
+            )
+        } else {
+            (
+                "Sign in to Elgato once and Get installs presets without the website's Download button.",
+                button(text(if self.signing_in { "Signing in…" } else { "Sign in" }).size(12).font(SEMIBOLD))
+                    .padding([5, 14])
+                    .style(primary_button)
+                    .on_press_maybe((!self.signing_in).then_some(Message::SignIn))
+                    .into(),
+            )
+        };
+        group(column![row![text(msg).size(12).color(DIM).width(Length::Fill), b].spacing(10).align_y(Alignment::Center)])
+    }
+
     /// Marketplace add-on a preset name belongs to, if listed.
     fn addon_named(&self, name: &str) -> Option<&wave_catalog::marketplace::Addon> {
         let AddonList::Done(Ok(list)) = &self.addons else { return None };
@@ -1980,7 +2173,7 @@ impl App {
                     .spacing(2)
                     .width(Length::Fill);
                     let get = |label: &'static str| -> Element<'a, Message> {
-                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone() });
+                        let b = button(text(label).size(12)).padding([5, 14]).style(soft_button).on_press(Message::Get { name: a.name.clone(), url: a.url.clone(), variant: a.variant_ids.first().cloned() });
                         iced::widget::tooltip(
                             b,
                             tooltip_box("Opens the product page. Download it there; Pipemic applies it here when it arrives.".into()),
@@ -2019,6 +2212,7 @@ impl App {
             .push(Space::new().height(4))
             .push(heading("ELGATO MARKETPLACE"))
             .push(text("EQ presets work on Linux. Plugins (Windows/macOS only) are not listed. Checked for new ones every hour.").size(11).color(DIM))
+            .push(self.account_row())
             .push(group(column![market]));
 
         let mut body = column![row![

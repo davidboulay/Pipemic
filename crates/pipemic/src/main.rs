@@ -2191,11 +2191,17 @@ impl App {
             AddonList::Done(Err(e)) => text(format!("Couldn't load the marketplace: {e}")).size(12).color(MUTED).into(),
             AddonList::Done(Ok(list)) => {
                 let mut col = column![].spacing(2);
+                let mut shown = 0;
                 let mut items: Vec<_> = list.iter().filter(|a| a.runs_on_linux()).collect();
                 items.sort_by_key(|a| a.name.to_lowercase());
                 for a in items {
                     let local = self.downloads.iter().find(|l| l.is(&a.name));
                     let update = local.is_some_and(|l| Self::newer(a.version.as_deref(), l.version.as_deref()));
+                    // Installed ones live in the section above; they stay here only to offer an update.
+                    if local.is_some() && !update && waiting.as_deref() != Some(a.name.as_str()) {
+                        continue;
+                    }
+                    shown += 1;
                     let info = column![
                         text(a.name.clone()).size(13).font(SEMIBOLD),
                         text(if a.summary.is_empty() { a.org.clone() } else { format!("{} · {}", a.org, a.summary) }).size(11).color(DIM),
@@ -2246,6 +2252,12 @@ impl App {
                     };
                     col = col.push(
                         container(row![thumb, container(info).clip(true).width(Length::Fill), action].spacing(12).align_y(Alignment::Center))
+                            .padding([6, 10]),
+                    );
+                }
+                if shown == 0 {
+                    col = col.push(
+                        container(text("You have every marketplace preset. New ones show up here when they're published.").size(12).color(DIM))
                             .padding([6, 10]),
                     );
                 }

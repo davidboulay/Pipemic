@@ -181,3 +181,21 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   input. pipemicd now checks after every connect and sets `output:analog-stereo+input:mono-fallback` if the card
   has no Wave:3 source. Verified by forcing iec958 and restarting pipemicd: fixed in 3 s, bridge relinked.
 - 2026-11-06: GitHub repo renamed to `davidboulay/Pipemic` (capital P); old URLs redirect. v0.3.0 released.
+- Clean-install check (2026-11-06): removed the local `54-wave3-never-driver.conf` WirePlumber tweak
+  (priority.driver 100, headroom 1024). With stock WirePlumber (priority.driver 2100, no headroom) the Wave:3
+  still drives its own clock through the bridge, 0 errors over 20 s in `pw-top`. The tweak is not needed; deleted.
+- WirePlumber restart (2026-11-06): the mic bridge stayed unlinked after `systemctl --user restart wireplumber`
+  (Wave:3 source back with its ports, pipemicd never relinked; `heal()` only retried links it had asked for).
+  Fix: `heal()` now also runs the reconcile every 2 s. Verified: 4/4 spaced WirePlumber restarts, bridge linked,
+  every ALSA node configured, Wave:3 drives its own clock.
+- Related WirePlumber race (not our code): a WirePlumber restart sometimes leaves devices unconfigured (nodes with
+  `PortConfig none`, 0 ports). Without pipemicd 0/12 restarts; with a client running `pactl` every second 3-4/12.
+  pipemicd's mute sync no longer runs `pactl` every second: it reads the Wave:3 source and its mute from the
+  registry (`mic::WaveView`, node Props `mute`) and only runs `pactl` to change something. ~50 restarts a few
+  seconds apart wedged PipeWire as a whole (every ALSA node unconfigured, WirePlumber restarts didn't help);
+  `systemctl --user restart pipewire pipewire-pulse wireplumber` fixed it. Don't stress-test that way again.
+- Stop crash (2026-11-06): pipemicd segfaulted on stop: `pw_context_destroy` disconnected the core while the
+  filter-chain audio thread was still running (libspa-filter-graph). Fix: loaded modules are destroyed in reverse
+  order before the context. Verified: 0 crashes in 11 stops; Spotify back on the default output after stop.
+- Open: one mid-run crash at 18:35 (SIGSEGV in libspa-filter-graph from the builtin plugin, main loop idle, no
+  log). No debug symbols for PipeWire 1.6.10 on the Arch/CachyOS debuginfod servers. Watch `coredumpctl list pipemicd`.

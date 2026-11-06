@@ -29,18 +29,45 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::rc::Rc;
 
-fn load_module(ctx: &pw::context::ContextRc, name: &str, args: &str) -> Result<()> {
-    let name_c = CString::new(name)?;
-    let args_c = CString::new(args)?;
-    // SAFETY: valid context pointer, NUL-terminated strings; the module is
-    // owned by the context and freed with it.
-    let m = unsafe {
-        pipewire_sys::pw_context_load_module(ctx.as_raw_ptr(), name_c.as_ptr(), args_c.as_ptr(), std::ptr::null_mut())
-    };
-    if m.is_null() {
-        bail!("loading {name} failed: {}", std::io::Error::last_os_error());
+/// Modules loaded into our context (mixes, effects, clock bridges).
+///
+/// They must go before the context does: `pw_context_destroy` disconnects the
+/// core first, tearing down the filter-chains' streams while their audio
+/// thread is still running the filter graph, and that crashed on every stop
+/// (SIGSEGV in libspa-filter-graph, 2026-11-06). Destroying each module first
+/// lets it stop its own streams cleanly.
+#[derive(Default)]
+struct Modules(Vec<*mut pipewire_sys::pw_impl_module>);
+
+impl Modules {
+    fn load(&mut self, ctx: &pw::context::ContextRc, name: &str, args: &str) -> Result<()> {
+        let name_c = CString::new(name)?;
+        let args_c = CString::new(args)?;
+        // SAFETY: valid context pointer, NUL-terminated strings. The module
+        // is owned by the context; we destroy it in `destroy` before that.
+        let m = unsafe {
+            pipewire_sys::pw_context_load_module(ctx.as_raw_ptr(), name_c.as_ptr(), args_c.as_ptr(), std::ptr::null_mut())
+        };
+        if m.is_null() {
+            bail!("loading {name} failed: {}", std::io::Error::last_os_error());
+        }
+        self.0.push(m);
+        Ok(())
     }
-    Ok(())
+
+    /// Unload in reverse order (effects and bridges before the mixes they feed).
+    fn destroy(&mut self) {
+        while let Some(m) = self.0.pop() {
+            // SAFETY: loaded by `load`, not destroyed yet, context still alive.
+            unsafe { pipewire_sys::pw_impl_module_destroy(m) };
+        }
+    }
+}
+
+impl Drop for Modules {
+    fn drop(&mut self) {
+        self.destroy();
+    }
 }
 
 /// What a request changed, for the main loop to act on.
@@ -247,6 +274,8 @@ fn main() -> Result<()> {
     }
     let context = pw::context::ContextRc::new(&main_loop, None).context("PipeWire context")?;
     let core = context.connect_rc(None).context("connecting to PipeWire")?;
+    // Declared after the context so it drops (and unloads) first.
+    let mut modules = Modules::default();
 
     // If PipeWire goes away (restart, crash), exit non-zero so systemd restarts us.
     let lost = Rc::new(std::cell::Cell::new(false));
@@ -255,6 +284,10 @@ fn main() -> Result<()> {
         let lost = lost.clone();
         core.add_listener_local()
             .error(move |id, _seq, res, msg| {
+                if id != pw::core::PW_ID_CORE {
+                    // e.g. a link we asked for that PipeWire refused
+                    eprintln!("pipemicd: PipeWire error on object {id}: {res}: {msg}");
+                }
                 if id == pw::core::PW_ID_CORE {
                     eprintln!("pipemicd: lost PipeWire connection ({res}: {msg})");
                     lost.set(true);
@@ -288,7 +321,7 @@ fn main() -> Result<()> {
 
     // Mixes: one filter-chain each, running inside this process.
     for mi in 0..cfg.mixes.len() {
-        load_module(&context, "libpipewire-module-filter-chain", &cfg.filter_chain_args(mi))
+        modules.load(&context, "libpipewire-module-filter-chain", &cfg.filter_chain_args(mi))
             .with_context(|| format!("mix {}", cfg.mixes[mi].id))?;
     }
 
@@ -299,7 +332,7 @@ fn main() -> Result<()> {
     let mut wants = Vec::new();
     for ch in &cfg.channels {
         let Some(prefix) = &ch.device else { continue };
-        load_module(&context, "libpipewire-module-loopback", &Config::bridge_args(ch))
+        modules.load(&context, "libpipewire-module-loopback", &Config::bridge_args(ch))
             .with_context(|| format!("bridge for {}", ch.id))?;
         wants.push(Want {
             out_node: NodeMatch::Prefix(prefix.clone()),
@@ -312,7 +345,7 @@ fn main() -> Result<()> {
     // Effects: every channel passes through its fx node (EQ) on the way to
     // the mixes and meters.
     for ch in &cfg.channels {
-        load_module(&context, "libpipewire-module-filter-chain", &Config::fx_args(ch))
+        modules.load(&context, "libpipewire-module-filter-chain", &Config::fx_args(ch))
             .with_context(|| format!("effects for {}", ch.id))?;
         for pos in Config::sides(ch) {
             let (out_node, out_port) = match &ch.device {
@@ -371,7 +404,8 @@ fn main() -> Result<()> {
         .filter(|m| m.kind == model::MixKind::Monitor)
         .map(|m| (Config::mix_out_node_name(m), m.output.clone()))
         .collect();
-    let graph = Rc::new(Graph::start(&core, wants, bind, cfg.router(), pins, cfg.output_fallback, app_meter.peaks.clone())?);
+    let wave = mic::SharedView::default();
+    let graph = Rc::new(Graph::start(&core, wants, bind, cfg.router(), pins, cfg.output_fallback, app_meter.peaks.clone(), wave.clone())?);
 
     for m in &cfg.mixes {
         eprintln!("pipemicd: mix '{}' -> {}", m.label, Config::mix_out_node_name(m));
@@ -380,7 +414,7 @@ fn main() -> Result<()> {
     // Control requests arrive on the main loop.
     let cfg = Rc::new(RefCell::new(cfg));
     let (tx, rx) = pw::channel::channel::<Job>();
-    let sock = control::serve(tx, mic::Mic::start(), meter.levels.clone())?;
+    let sock = control::serve(tx, mic::Mic::start(wave), meter.levels.clone())?;
     let _rx = {
         let cfg = cfg.clone();
         let graph = graph.clone();
@@ -450,6 +484,8 @@ fn main() -> Result<()> {
     drop(meter);
     drop(app_meter);
     drop(sinks);
+    modules.destroy();
+    roundtrip(&main_loop, &core);
     drop(signals);
     Ok(())
 }

@@ -140,6 +140,7 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   "<name> was added", closed only by OK. Added presets are copied to `~/.local/share/pipemic/presets/`
   (the library, listed first under YOUR PRESETS); Delete trashes every copy (library + Downloads).
   Plugin links (`vst/...`) get "Pipemic can use EQ presets only".
+- Wayland: winit's focus_window is a no-op, so a marketplace link reopens the window (closed + new) unless it has focus; new windows come to the front on KDE.
 - Probing Elgato's gateway for an unauthenticated download URL was stopped (treated as getting around their
   login). Don't retry; downloads stay with the user's browser.
 - Not yet verified end to end: the auto-apply after a real browser download (needs the user's login).

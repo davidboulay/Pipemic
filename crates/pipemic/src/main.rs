@@ -577,6 +577,8 @@ enum Message {
     MarketLink(String),
     /// Close the "add-on added" popup.
     IncomingOk,
+    /// The mixer window gained / lost focus.
+    Focus(bool),
 }
 
 /// An add-on opened from the marketplace site: waiting for its file, then
@@ -654,6 +656,8 @@ struct App {
     /// Short confirmation ("Old Radio added to Other") and its id.
     toast: Option<(u64, String)>,
     incoming: Option<Incoming>,
+    /// The mixer window has keyboard focus.
+    focused: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -743,6 +747,8 @@ impl App {
             iced::window::close_events().map(Message::WindowClosed),
             iced::event::listen_with(|e, _, _| match e {
                 iced::Event::Window(iced::window::Event::FileDropped(p)) => Some(Message::FileDropped(p)),
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focus(true)),
+                iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::Focus(false)),
                 _ => None,
             }),
         ]);
@@ -768,6 +774,19 @@ impl App {
                 self.tray_state = Some(state);
                 t.set(state.0, state.1);
             }
+        }
+    }
+
+    /// Put the window in front of the browser. On Wayland an app can't
+    /// raise its own window (winit's focus request is a no-op), but a new
+    /// window is shown on top: so reopen it unless it already has focus.
+    fn bring_forward(&mut self) -> Task<Message> {
+        match self.window {
+            Some(id) if !self.focused => {
+                self.window = None;
+                Task::batch([iced::window::close(id), self.show_window()])
+            }
+            _ => self.show_window(),
         }
     }
 
@@ -1032,7 +1051,7 @@ impl App {
                 return Task::perform(blocking(addons::scan_downloads), Message::Downloads);
             }
             Message::MarketLink(url) => {
-                let show = self.show_window();
+                let show = self.bring_forward();
                 let Some(variant) = addons::preset_link(&url) else {
                     self.incoming = Some(Incoming {
                         variant: String::new(),
@@ -1049,6 +1068,7 @@ impl App {
                 return Task::batch(t);
             }
             Message::IncomingOk => self.incoming = None,
+            Message::Focus(f) => self.focused = f,
             Message::ToastDone(id) => {
                 if self.toast.as_ref().is_some_and(|(i, _)| *i == id) {
                     self.toast = None;

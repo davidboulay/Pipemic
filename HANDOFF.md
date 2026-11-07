@@ -228,3 +228,13 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   the Browser and Music channels reaches the speaker with pipemicd running; mixes still meter.
 - Not verified yet: Wave:3 plugged in (bridge → fx linked again) on the dock, and replug of the Wave:3 while
   running (link dropped and re-created). Check the mic in Outgoing after a replug.
+
+## Who restarts WirePlumber (2026-11-07, Linux)
+- Found: the `intel-ipu7-camera` package's `/etc/systemd/system/v4l2-relayd@ipu7.service.d/override.conf` runs
+  `systemctl --user restart wireplumber` 2 s after every camera relay start, i.e. on every resume. At 17:57 that
+  restart left every ALSA node with 0 ports and no default sink: Spotify/YouTube silent. Not Pipemic.
+- Recovery that worked: `systemctl --user restart pipewire pipewire-pulse wireplumber`, then
+  `xps-speaker-tuning`, then `pipemicd` (restarting WirePlumber alone did not help).
+- Prevention (applied by the user): drop-in `zz-no-wireplumber-restart.conf` in the same directory with an empty
+  `ExecStartPost=`. Chrome/Meet/Slack open `/dev/video50` directly and the relay format is fixed (1920x1080 NV12),
+  so the camera should be unaffected. To verify after the next wake: camera in a Meet preview, and audio plays.

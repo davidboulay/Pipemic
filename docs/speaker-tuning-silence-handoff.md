@@ -1,5 +1,8 @@
 # Handoff: laptop speaker tuning goes silent while pipemicd runs (2026-11-07)
 
+> **Resolved 2026-11-07.** Cause: the idle mic clock bridge (no Wave:3) stalled the graph behind the mixes.
+> Fix and verification: see the 2026-11-07 section in `HANDOFF.md`. The notes below are the original investigation.
+
 Focus for the next session: **find what pipemicd does that silences the user's speaker tuning filter, and fix it.**
 Project background is in `AGENTS.md` and `HANDOFF.md`. Don't repeat that here.
 

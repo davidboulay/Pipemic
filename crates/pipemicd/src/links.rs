@@ -38,6 +38,8 @@ pub struct Want {
     pub out_ports: Vec<String>,
     pub in_node: String,
     pub in_port: String,
+    /// Only while a node matching this exists; the link is removed when it goes.
+    pub requires: Option<NodeMatch>,
 }
 
 struct Port {
@@ -297,6 +299,13 @@ impl Graph {
                     else {
                         continue;
                     };
+                    if w.requires.as_ref().is_some_and(|r| !st.nodes.values().any(|n| r.matches(n))) {
+                        // Dropping our proxy destroys the link (object.linger = false).
+                        if st.links.remove(&(oport, iport)).is_some() {
+                            st.asked.remove(&(oport, iport));
+                        }
+                        continue;
+                    }
                     if st.links.contains_key(&(oport, iport)) {
                         continue;
                     }
@@ -320,6 +329,7 @@ impl Graph {
             }
         });
         let reconcile_global = reconcile.clone();
+        let reconcile_rm = reconcile.clone();
 
         let probe_core = core.clone();
         let st_add = state.clone();
@@ -496,6 +506,9 @@ impl Graph {
                     st.links.retain(|&(o, i), _| o != id && i != id);
                     st.asked.retain(|&(o, i), _| o != id && i != id);
                 }
+                drop(st);
+                // Drop links whose `requires` node just went (the mic bridge).
+                reconcile_rm();
             })
             .register();
 

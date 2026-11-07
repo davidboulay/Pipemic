@@ -339,6 +339,7 @@ fn main() -> Result<()> {
             out_ports: vec!["capture_MONO".to_owned(), "capture_FL".to_owned()],
             in_node: format!("{}.in", Config::bridge_node_name(ch)),
             in_port: "input_MONO".to_owned(),
+            requires: None,
         });
     }
 
@@ -348,11 +349,21 @@ fn main() -> Result<()> {
         modules.load(&context, "libpipewire-module-filter-chain", &Config::fx_args(ch))
             .with_context(|| format!("effects for {}", ch.id))?;
         for pos in Config::sides(ch) {
-            let (out_node, out_port) = match &ch.device {
-                None => (Config::sink_node_name(ch), format!("monitor_{pos}")),
-                Some(_) => (Config::bridge_node_name(ch), format!("output_{pos}")),
+            // The bridge feeds the effects only while its device is there:
+            // with no device its playback side is never triggered, and left
+            // linked it stalled the graph downstream of the mixes (Personal
+            // into a filter-chain sink played silence, 2026-11-07).
+            let (out_node, out_port, requires) = match &ch.device {
+                None => (Config::sink_node_name(ch), format!("monitor_{pos}"), None),
+                Some(dev) => (Config::bridge_node_name(ch), format!("output_{pos}"), Some(NodeMatch::Prefix(dev.clone()))),
             };
-            wants.push(Want { out_node: NodeMatch::Exact(out_node), out_ports: vec![out_port], in_node: Config::fx_in_node_name(ch), in_port: format!("input_{pos}") });
+            wants.push(Want {
+                out_node: NodeMatch::Exact(out_node),
+                out_ports: vec![out_port],
+                in_node: Config::fx_in_node_name(ch),
+                in_port: format!("input_{pos}"),
+                requires,
+            });
         }
     }
     // A channel's audio as the mixes see it: fx output port for side L / R
@@ -367,7 +378,7 @@ fn main() -> Result<()> {
         for (i, ch) in cfg.channels.iter().enumerate() {
             for side in 0..2 {
                 let (out_node, out_ports) = fx_out(ch, side);
-                wants.push(Want { out_node, out_ports, in_node: Config::mix_in_node_name(m), in_port: Config::mix_in_port(i, side) });
+                wants.push(Want { out_node, out_ports, in_node: Config::mix_in_node_name(m), in_port: Config::mix_in_port(i, side), requires: None });
             }
         }
     }
@@ -384,7 +395,7 @@ fn main() -> Result<()> {
     for (i, ch) in cfg.channels.iter().enumerate() {
         for side in 0..2 {
             let (out_node, out_ports) = fx_out(ch, side);
-            wants.push(Want { out_node, out_ports, in_node: meter::NODE_NAME.into(), in_port: meter::in_port(i, side) });
+            wants.push(Want { out_node, out_ports, in_node: meter::NODE_NAME.into(), in_port: meter::in_port(i, side), requires: None });
         }
     }
     for (j, m) in cfg.mixes.iter().enumerate() {
@@ -394,6 +405,7 @@ fn main() -> Result<()> {
                 out_ports: vec![format!("output_{pos}"), format!("capture_{pos}")],
                 in_node: meter::NODE_NAME.into(),
                 in_port: meter::in_port(cfg.channels.len() + j, side),
+                requires: None,
             });
         }
     }

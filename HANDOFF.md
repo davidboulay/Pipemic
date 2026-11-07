@@ -212,3 +212,19 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
   AirPods when Slack used Pipemic Outgoing (mix group), warped voice when Slack used the Wave:3 directly (device
   group, bridge steps uneven). Fix: both bridge halves `node.force-quantum = 1024`. Verified with a live huddle,
   both mic choices: both groups stay at 1024, 0 errors over 15 s.
+
+## Speaker tuning silent while pipemicd runs (2026-11-07, Linux)
+- Symptom: with the user's own filter-chain sink (`xps_speaker_tuning`) as the default, everything played into it
+  was silent while pipemicd ran (laptop undocked, no Wave:3). Details and measurements: `docs/speaker-tuning-silence-handoff.md`.
+- Cause: the mic clock bridge (`pipemic.dev.mic`, module-loopback). Its playback side is a trigger node that only
+  runs when its capture side runs. With no Wave:3, the capture side never runs, yet the bridge stayed linked into
+  `fx.mic`, so it never finished a cycle. That stalled every reader of the mixes outside pipemicd (a filter-chain
+  sink, even a plain `pw-record`). In-process readers (the meter) and ALSA sinks were unaffected, which is why
+  the CalDigit and the raw speaker worked.
+- Narrowing (all measured): a mix → xps = silent, an fx output → xps = fine; Personal's exact args in a
+  stand-alone process = fine; pipemicd with the mic `device` removed (no bridge) = fine.
+- Fix: wanted links take an optional `requires` node. Bridge → fx is linked only while the Wave:3 source exists,
+  and dropped when it goes (reconcile now also runs on node removal). Verified undocked: beep into xps and through
+  the Browser and Music channels reaches the speaker with pipemicd running; mixes still meter.
+- Not verified yet: Wave:3 plugged in (bridge → fx linked again) on the dock, and replug of the Wave:3 while
+  running (link dropped and re-created). Check the mic in Outgoing after a replug.

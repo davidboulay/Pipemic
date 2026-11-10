@@ -415,34 +415,10 @@ impl Config {
     pub fn sink_node_name(c: &Channel) -> String {
         Self::sink_for(&c.id)
     }
-    /// Clock bridge for a device channel: a loopback whose capture side runs
-    /// on the device's clock and whose playback side feeds the mixes.
+    /// Clock bridge for a device channel (see bridge.rs): capture side on the
+    /// device's clock (`….in`), playback side feeding the mixes.
     pub fn bridge_node_name(c: &Channel) -> String {
         format!("pipemic.dev.{}", c.id)
-    }
-    /// SPA-JSON args for libpipewire-module-loopback bridging device channel `c`.
-    pub fn bridge_args(c: &Channel) -> String {
-        let n = Self::bridge_node_name(c);
-        // Distinct node.group per side: otherwise both halves share one driver
-        // and the device still follows the output's clock (robot voice, seen
-        // 2026-11-06). Split, the loopback resamples between the two clocks.
-        // The mix side asks for a normal 1024 quantum: left to the loopback's
-        // own small latency it pulled the whole mix graph down to 256, which a
-        // Bluetooth output can't keep up with (constant xruns, crackling).
-        // Forced on both sides, not just requested: an app asking for less
-        // (Slack huddle: 480) pulls its graph to 256. On the mix side that's
-        // too short for Bluetooth (crackle); on the device side (Slack using
-        // the Wave:3 directly) the steps no longer match (2026-11-06).
-        // The device side runs at the same 1024: with 512 in and 1024 out
-        // the loopback's rate correction wobbled (warped voice, 2026-11-06).
-        // The delay buffer must outlast one cycle (1024 = 21 ms): at 0.02 s
-        // it ran dry every cycle (robot voice). 0.05 s leaves margin.
-        format!(
-            r#"{{ node.description = "Pipemic {label} (bridge)" audio.position = [ MONO ] target.delay.sec = 0.05
-  capture.props = {{ node.name = "{n}.in" node.group = "{n}.device" node.link-group = "{n}.device" node.latency = "1024/48000" node.force-quantum = 1024 node.autoconnect = false node.dont-reconnect = true }}
-  playback.props = {{ node.name = "{n}" node.group = "{n}.mix" node.link-group = "{n}.mix" node.latency = "1024/48000" node.force-quantum = 1024 node.autoconnect = false node.dont-reconnect = true }} }}"#,
-            label = c.label.replace('"', "")
-        )
     }
     /// Effects node of a channel: everything the channel sends to the mixes
     /// and meters passes through it. Capture side `….in`, playback side bare.

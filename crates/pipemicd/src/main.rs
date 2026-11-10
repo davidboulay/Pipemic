@@ -11,6 +11,7 @@
 //!
 //! Everything in PipeWire is owned by this process and disappears on exit.
 
+mod bridge;
 mod control;
 mod eq;
 mod links;
@@ -325,15 +326,20 @@ fn main() -> Result<()> {
             .with_context(|| format!("mix {}", cfg.mixes[mi].id))?;
     }
 
-    // Device channels (the mic) go through a loopback bridge: the device keeps
-    // its own clock and the bridge resamples into the mixes' graph. Linked
+    // Device channels (the mic) go through a clock bridge (bridge.rs): the
+    // device keeps its own clock and the bridge resamples into the mixes'
+    // graph, without either side waiting for the other. Linked
     // directly, a USB mic follows the output's clock and XRUNs nonstop
     // (Wave:3 behind a dock: ~47/s, heard as a robot voice; 2026-11-05).
     let mut wants = Vec::new();
+    let mut bridges = Vec::new();
     for ch in &cfg.channels {
         let Some(prefix) = &ch.device else { continue };
-        modules.load(&context, "libpipewire-module-loopback", &Config::bridge_args(ch))
-            .with_context(|| format!("bridge for {}", ch.id))?;
+        bridges.push((
+            ch.id.clone(),
+            bridge::Bridge::start(&core, &Config::bridge_node_name(ch), &ch.label)
+                .with_context(|| format!("bridge for {}", ch.id))?,
+        ));
         wants.push(Want {
             out_node: NodeMatch::Prefix(prefix.clone()),
             out_ports: vec!["capture_MONO".to_owned(), "capture_FL".to_owned()],
@@ -484,6 +490,24 @@ fn main() -> Result<()> {
     };
     heal_timer.update_timer(Some(std::time::Duration::from_secs(2)), Some(std::time::Duration::from_secs(2))).into_result()?;
 
+    // Bridge health in the journal: once after start, then whenever a
+    // bridge ran dry or overflowed since the last check.
+    let bridge_timer = {
+        let seen: Vec<std::cell::Cell<Option<(u64, u64)>>> = bridges.iter().map(|_| std::cell::Cell::new(None)).collect();
+        let stats: Vec<(String, std::sync::Arc<bridge::Stats>)> = bridges.iter().map(|(id, b)| (id.clone(), b.stats.clone())).collect();
+        let verbose = std::env::var_os("PIPEMIC_BRIDGE_LOG").is_some();
+        main_loop.loop_().add_timer(move |_| {
+            for ((id, st), last) in stats.iter().zip(&seen) {
+                let now = (st.underruns.load(std::sync::atomic::Ordering::Relaxed), st.overruns.load(std::sync::atomic::Ordering::Relaxed));
+                if verbose || last.get() != Some(now) {
+                    eprintln!("pipemicd: bridge {id}: {}", st.summary());
+                    last.set(Some(now));
+                }
+            }
+        })
+    };
+    bridge_timer.update_timer(Some(std::time::Duration::from_secs(10)), Some(std::time::Duration::from_secs(if std::env::var_os("PIPEMIC_BRIDGE_LOG").is_some() { 5 } else { 30 }))).into_result()?;
+
     eprintln!("pipemicd: control socket {}; running (Ctrl-C to stop)", sock.display());
     main_loop.run();
     let _ = std::fs::remove_file(&sock);
@@ -495,6 +519,7 @@ fn main() -> Result<()> {
     roundtrip(&main_loop, &core);
     drop(meter);
     drop(app_meter);
+    drop(bridges);
     drop(sinks);
     modules.destroy();
     roundtrip(&main_loop, &core);

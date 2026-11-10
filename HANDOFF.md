@@ -238,3 +238,21 @@ Goal: a Linux reimplementation of Elgato Wave Link 3, written in Rust.
 - Prevention (applied by the user): drop-in `zz-no-wireplumber-restart.conf` in the same directory with an empty
   `ExecStartPost=`. Chrome/Meet/Slack open `/dev/video50` directly and the relay format is fixed (1920x1080 NV12),
   so the camera should be unaffected. To verify after the next wake: camera in a Meet preview, and audio plays.
+
+## Incoming call audio crackled (2026-11-10, Linux)
+- Report: Google Meet right after a resume from sleep (08:52, pipemicd kept running): the colleague's voice
+  crackled, own mic fine. Quitting Pipemic fixed it.
+- Cause found: `module-loopback` (the mic bridge) always makes its playback side a trigger node run by its
+  capture side (PipeWire 1.6 `module-loopback.c`, `PW_STREAM_FLAG_TRIGGER`, no option). So every output cycle
+  waited for the Wave:3 cycle: pw-profiler showed `pipemic.dev.mic` signalled 3 µs after the Wave:3 finished,
+  and the CalDigit graph finished 2-8.3 ms into its 21 ms cycle (0.05 ms without Pipemic). Any Wave:3 timing
+  hiccup then hits the speakers; the mic side has a buffer. Not reproduced as xruns at idle (0 in 5 min and 8
+  restarts), so the link to the crackle is likely, not proven.
+- Fix: own bridge in `crates/pipemicd/src/bridge.rs`: capture stream on the Wave:3 clock → SPSC ring → playback
+  stream on the mix clock, non-trigger, `pw_stream_set_rate` keeps the ring at 2048 frames (~43 ms; was 50 ms).
+  For a playback stream rate < 1 drains the ring (found by test: the other sign ran away). Logs
+  `bridge mic: fill…` after start and on any underrun/overrun; `PIPEMIC_BRIDGE_LOG=1` logs every 5 s.
+- Verified on the dock: `pipemic.dev.mic` now runs at offset 0 in the CalDigit graph, graph done in ~0.77 ms;
+  Outgoing recorded 30 s with no gaps. With the laptop speaker as output: converges to ±1 ppm, fill 2048,
+  0 overruns over 200 s (one underrun right at start, before audio flows).
+- To verify: a real Meet call, ideally after a resume, and AirPods as output (independent clock).
